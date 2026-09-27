@@ -1,0 +1,27 @@
+# Java compilado
+*.class
+
+# Carpetas de compilación
+bin/
+out/
+target/
+build/
+
+# IDEs
+.idea/
+.vscode/
+*.iml
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Datos locales de SQLite
+*.db
+*.db-journal
+
+# Variables/secretos locales
+.env
