@@ -39,7 +39,7 @@ operarios, sesiones de riego e incidencias.
 ### Apache Kafka
 
 Sistema de streaming de eventos utilizado para desacoplar las solicitudes,
-las respuestas, la telemetría y las incidencias.
+las respuestas, la telemetría, las incidencias y las órdenes de riego.
 
 ## 2. Comunicaciones
 
@@ -56,19 +56,19 @@ Se utiliza para transmitir eventos:
 
 - Solicitudes de riego.
 - Autorizaciones y denegaciones.
-- Telemetría.
-- Incidencias.
-- Finalización de riegos.
-- Cambios de estado.
+- Telemetría durante riego.
+- Órdenes de inicio, parada, bloqueo y activación.
+- Resultados de los servicios.
+- Avisos al operario sobre incidencias de su riego.
 
 ## 3. Flujo de registro
 
 1. WM_WS_M se conecta a WM_Central.
-2. WM_WS_M envía su identificador y ubicación.
-3. WM_Central valida los datos.
-4. WM_Central registra o actualiza la estación en SQLite.
-5. WM_Central responde aceptando o rechazando el registro.
-6. La estación queda disponible si la autenticación es correcta.
+2. WM_WS_M envía el identificador de la estación.
+3. WM_Central consulta SQLite.
+4. Si la estación existe, recupera su ubicación y acepta la conexión.
+5. Si no existe, rechaza el registro.
+6. La estación queda `AVAILABLE` cuando el Monitor confirma que el Engine responde correctamente.
 
 ## 4. Flujo de riego
 
@@ -86,11 +86,11 @@ Se utiliza para transmitir eventos:
 
 ## 5. Estados de una estación
 
-- DISPONIBLE.
-- REGANDO.
-- FUGA.
-- FUERA_SERVICIO.
-- DESCONECTADA.
+- `AVAILABLE`: DISPONIBLE.
+- `WATERING`: REGANDO.
+- `LEAK`: FUGA.
+- `OUT_OF_SERVICE`: FUERA_SERVICIO.
+- `DISCONNECTED`: DESCONECTADA.
 
 ## 6. Despliegue previsto
 
