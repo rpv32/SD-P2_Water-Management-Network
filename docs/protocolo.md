@@ -48,13 +48,13 @@ OPERACION#campo1#campo2#...#campoN
 Por ejemplo, el Monitor puede solicitar el registro de una estación con:
 
 ```text
-REGISTER#550e8400-e29b-41d4-a716-446655440000#WS-01
+REGISTER#550-e29b#WS-01
 ```
 
 Central puede responder:
 
 ```text
-REGISTER_RESULT#550e8400-e29b-41d4-a716-446655440000#OK##Estación autenticada
+REGISTER_RESULT#550-e29b#OK##Estación autenticada
 ```
 
 Para enviar y recibir los mensajes utilizaremos:
@@ -62,7 +62,9 @@ Para enviar y recibir los mensajes utilizaremos:
 - `DataOutputStream.writeUTF()`
 - `DataInputStream.readUTF()`
 
-Cada tipo de mensaje tendrá un número concreto de campos. El receptor comprobará:
+Cada tipo de mensaje tendrá un número concreto de campos.
+
+El receptor comprobará:
 
 1. Que la operación sea conocida.
 2. Que el número de campos sea correcto.
@@ -81,7 +83,7 @@ String[] campos = mensaje.split("#", -1);
 ```
 
 El segundo parámetro permite conservar los campos vacíos situados al final del
-mensaje. Esto es necesario porque algunos campos son opcionales.
+mensaje ya que algunos campos son opcionales.
 
 Cuando un mensaje sea incorrecto, el receptor responderá:
 
@@ -95,8 +97,7 @@ Por ejemplo:
 ERROR#msg-01#BAD_FIELD_COUNT#Número incorrecto de campos
 ```
 
-Si no se puede obtener el identificador del mensaje recibido, `correlationId`
-se enviará vacío:
+Si no se puede obtener el identificador del mensaje recibido, `correlationId` se enviará vacío:
 
 ```text
 ERROR##MALFORMED_MESSAGE#Mensaje no válido
@@ -108,17 +109,17 @@ ERROR##MALFORMED_MESSAGE#Mensaje no válido
 
 | Mensaje | Sentido | Campos de `DATA` | Función |
 |---|---|---|---|
-| `REGISTER` | Monitor → Central | `messageId#stationId` | Solicita la autenticación de una estación ya registrada en SQLite. |
-| `REGISTER_RESULT` | Central → Monitor | `correlationId#OK/ERROR#errorCode#message` | Acepta o rechaza el registro. |
-| `MONITOR_HEARTBEAT` | Monitor → Central | `messageId#stationId#engineHealth#occurredAt` | Informa de que el Monitor sigue conectado y del último estado del Engine. |
-| `INCIDENT` | Monitor → Central | `messageId#stationId#cause#sessionId#occurredAt` | Notifica que el Engine responde `KO` o no responde. |
-| `RECOVERY` | Monitor → Central | `messageId#stationId#occurredAt` | Notifica que el Engine vuelve a responder `OK`. |
+| `REGISTER` | Monitor --> Central | `messageId#stationId` | Solicita la autenticación de una estación ya registrada en SQLite. |
+| `REGISTER_RESULT` | Central --> Monitor | `correlationId#OK/ERROR#errorCode#message` | Acepta o rechaza el registro. |
+| `MONITOR_HEARTBEAT` | Monitor --> Central | `messageId#stationId#engineHealth#occurredAt` | Informa de que el Monitor sigue conectado y del último estado del Engine. |
+| `INCIDENT` | Monitor --> Central | `messageId#stationId#cause#sessionId#occurredAt` | Notifica que el Engine responde `KO` o no responde. |
+| `RECOVERY` | Monitor --> Central | `messageId#stationId#occurredAt` | Notifica que el Engine vuelve a responder `OK`. |
 
 Ejemplos de `DATA`:
 
 ```text
-REGISTER#550e8400-e29b-41d4-a716-446655440000#WS-01
-REGISTER_RESULT#550e8400-e29b-41d4-a716-446655440000#OK##Estación autenticada
+REGISTER#550-e29b#WS-01
+REGISTER_RESULT#550-e29b#OK##Estación autenticada
 MONITOR_HEARTBEAT#msg-02#WS-01#OK#2026-10-17T12:00:00Z
 INCIDENT#msg-03#WS-01#ENGINE_TIMEOUT#session-01#2026-10-17T12:01:00Z
 RECOVERY#msg-04#WS-01#2026-10-17T12:02:00Z
@@ -136,18 +137,18 @@ durante la autenticación.
 
 ### Detección de desconexión
 
-El Monitor enviará un `MONITOR_HEARTBEAT` periódicamente. El intervalo y el tiempo máximo de espera serán configurables. Si Central supera ese tiempo sin recibir mensajes, marcará la estación como `DISCONNECTED`.
+El Monitor enviará un `MONITOR_HEARTBEAT` periódicamente, si Central supera ese tiempo sin recibir mensajes, marcará la estación como `DISCONNECTED`.
 
 ## 5. Monitor y Engine
 
-`WM_WS_M` crea un servidor socket y `WM_WS_E` se conecta a él. El Monitor envía una comprobación de salud cada segundo, tal como indica el enunciado.
+`WM_WS_M` crea un servidor socket y `WM_WS_E` se conecta a él. El Monitor envía una comprobación de salud cada segundo.
 
 | Mensaje | Sentido | Campos de `DATA` | Función |
 |---|---|---|---|
-| `ENGINE_HELLO` | Engine → Monitor | `messageId#stationId` | Identifica el Engine que intenta conectarse. |
-| `ENGINE_HELLO_RESULT` | Monitor → Engine | `correlationId#OK/ERROR#errorCode` | Acepta o rechaza al Engine. |
-| `HEALTH_CHECK` | Monitor → Engine | `messageId#occurredAt` | Pregunta si el Engine está funcionando. |
-| `HEALTH_RESULT` | Engine → Monitor | `correlationId#OK/KO#sessionId` | Devuelve su estado y la sesión activa, si existe. |
+| `ENGINE_HELLO` | Engine --> Monitor | `messageId#stationId` | Identifica el Engine que intenta conectarse. |
+| `ENGINE_HELLO_RESULT` | Monitor --> Engine | `correlationId#OK/ERROR#errorCode` | Acepta o rechaza al Engine. |
+| `HEALTH_CHECK` | Monitor --> Engine | `messageId#occurredAt` | Pregunta si el Engine está funcionando. |
+| `HEALTH_RESULT` | Engine --> Monitor | `correlationId#OK/KO#sessionId` | Devuelve su estado y la sesión activa, si existe. |
 
 Ejemplos:
 
@@ -158,9 +159,9 @@ HEALTH_CHECK#msg-11#2026-10-17T12:00:00Z
 HEALTH_RESULT#msg-11#OK#session-01
 ```
 
-Si el Engine responde `KO` o no responde antes del timeout, el Monitor envía un `INCIDENT` a Central. Cuando vuelve a responder `OK`, envía `RECOVERY`.
+Si el Engine responde `KO` o no responde antes del timeout, el Monitor envía un `INCIDENT` a Central y cuando vuelve a responder `OK`, envía `RECOVERY`.
 
-Las órdenes de riego no se enviarán por este socket. El Engine las recibirá mediante Kafka. Así se mantiene separada la comprobación de salud de los eventos de negocio.
+Las órdenes de riego no se enviarán por este socket, el Engine las recibe mediante Kafka, así se mantiene separada la comprobación de salud de los eventos de negocio.
 
 ## 6. Eventos Kafka
 
@@ -186,7 +187,7 @@ Los valores de Kafka se enviarán en JSON UTF-8. Todos los eventos incluirán:
 | `wm.station.results` | `WM_WS_E` | `WM_Central` | `stationId` | Confirmación de órdenes y resumen final. |
 | `wm.fo.<operatorId>.events` | `WM_Central` | `WM_FO` indicado | `requestId` o `sessionId` | Respuestas y eventos dirigidos a un operario concreto. |
 
-Para esta práctica se usará un topic de eventos por operario. De esta forma, cada `WM_FO` consume solamente sus mensajes. Como el número de operarios de la simulación es pequeño, esta solución es sencilla de implementar y explicar.
+Se usará un topic de eventos por operario. De esta forma, cada `WM_FO` consume solamente sus mensajes.
 
 ### Solicitud de riego
 
@@ -269,9 +270,7 @@ Los motivos de finalización serán, como mínimo:
 
 - Central usará un grupo propio para solicitudes, consultas, telemetría y resultados.
 - Cada `WM_FO` usará un grupo basado en su identificador, por ejemplo `wm-fo-OP-01`.
-- Los Engine no deben compartir un grupo si eso puede hacer que una orden para una estación sea recibida únicamente por otra. Durante la implementación se decidirá entre asignar particiones o filtrar por `stationId`, y se probará expresamente con dos estaciones.
-
-Este último punto queda pendiente de concretar en la issue de Kafka, porque depende de cómo se creen las particiones y los consumidores Java.
+- Los Engine no deben compartir un grupo si eso puede hacer que una orden para una estación sea recibida únicamente por otra. En la implementación se decidirá entre asignar particiones o filtrar por `stationId`.
 
 ## 8. Duplicados y errores
 
@@ -310,8 +309,6 @@ Para no perder las operaciones importantes:
 - Si Central se reinicia, recuperará de SQLite las estaciones y sesiones conocidas.
 - La telemetría pendiente y los reintentos se concretarán en las tareas de Kafka y resiliencia.
 
-No se implementará de momento una solución compleja de outbox/inbox. Si durante las pruebas se comprueba que es necesaria para cumplir la rúbrica, se añadirá de forma documentada.
-
 ## 10. Decisiones tomadas
 
 1. Los mensajes de socket utilizarán campos separados por `#` y se enviarán mediante `readUTF()` y `writeUTF()`.
@@ -330,4 +327,4 @@ No se implementará de momento una solución compleja de outbox/inbox. Si durant
 4. Forma definitiva de repartir órdenes Kafka entre varios Engine.
 5. Política de retención y reintentos.
 6. Mecanismo de almacenamiento temporal si Kafka no está disponible.
-7. Valorar si se añade STX/ETX/LRC como mejora técnica.
+7. Valorar si se añade STX/ETX/LRC.

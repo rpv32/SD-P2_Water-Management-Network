@@ -34,7 +34,7 @@ Si coinciden varias situaciones, se aplicará este orden:
 4. Si todo está correcto y existe un riego activo: `WATERING`.
 5. Si todo está correcto y no hay riego: `AVAILABLE`.
 
-Por ejemplo, si una estación bloqueada también tiene el Engine en `KO`, seguirá mostrando `OUT_OF_SERVICE`. Al activarla, pasará a `LEAK`, no a `AVAILABLE`, porque la avería todavía existe.
+Por ejemplo, si una estación bloqueada también tiene el Engine en `KO`, seguirá mostrando `OUT_OF_SERVICE`. Al activarla, pasará a `LEAK`, no a `AVAILABLE`, ya que la avería todavía existe.
 
 ## 4. Transiciones
 
