@@ -1,6 +1,44 @@
 import java.net.*;
+import java.util.HashSet;
+import java.util.Set;
 
 public class WM_Central {
+
+	//Estaciones que tiene un Monitor conectado
+	//Luego cuando se cree SQLite se guardaran en la base de datos.
+	private static Set<String> estacionesConectadas = new HashSet<String>();
+
+	//Registra una estación como conectada, si ya estaba conectada devuelve false, si no devuelve true
+	public static synchronized boolean registrarConexion(String stationId){
+		if(estacionesConectadas.contains(stationId)){
+			return false;
+		}
+		estacionesConectadas.add(stationId);
+		mostrarEstacionesConectadas();
+
+		return true;
+	}
+
+	//Elimina una estación de la lista de estaciones conectadas cuando cierra la conexión
+	public static synchronized void cerrarConexion(String stationId){
+		estacionesConectadas.remove(stationId);
+		mostrarEstacionesConectadas();
+	}
+
+	//Muestra por pantalla las estaciones conectadas a un Monitor
+	public static synchronized void mostrarEstacionesConectadas(){
+		System.out.println("----------------------------------------");
+		System.out.println("Estaciones conectadas:");
+
+		if(estacionesConectadas.isEmpty()){
+			System.out.println("Ninguna estación conectada");
+		}else{
+			for(String estacion : estacionesConectadas){
+				System.out.println("- " + estacion);
+			}
+		}
+		System.out.println("----------------------------------------");
+	}
 
 	/**
 	 * @param args

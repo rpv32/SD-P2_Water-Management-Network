@@ -65,30 +65,34 @@ public class HiloWM extends Thread {
 	
 
 	//Recibe la trama enviada por una estación y la valida
-	//Formato de la trama: REGISTRO#ID DEL MENSAJE#ID_ESTACIÓN
+	//Formato de la trama: REGISTER_RESULT#correlationId#OK|ERROR#errorCode#message
 
-	public String realizarRegistro(String p_Cadena) {
+	public String realizarRegistro(String p_Cadena){
 		//Divido la trama
 		String[] registro = p_Cadena.split("#", -1);
 		String respuesta = "";
 		
-		System.out.println("SRV: El mensaje recibido es: " + registro[0]);
-		
 		//Compruebo que la trama sea válida
-		if ((registro.length == 3) && (registro[0].compareTo("REGISTER") == 0) && 
-			(registro[1].compareTo("") != 0 && registro[2].compareTo("") != 0)) {
+		if((registro.length == 3) && (registro[0].compareTo("REGISTER") == 0) && 
+			(registro[1].compareTo("") != 0 && registro[2].compareTo("") != 0)){
 				
-				stationId = registro[2];
-				registrada = true;
+				//Compruebo que la estación no esté ya conectada
+				if(WM_Central.registrarConexion(registro[2])){
+					//Registro correcto
+					this.stationId = registro[2];
+					this.registrada = true;
 
-				//Muestro la estación y su ubicación
-				System.out.println("SRV: ID de la estación: " + stationId);
+					System.out.println("SRV: ID de la estación " + stationId);
+					respuesta = "REGISTER_RESULT#" + registro[1] + "#OK##Estación registrada correctamente";
+				}else{
+					//La estación ya estaba conectada
+					respuesta = "REGISTER_RESULT#" + registro[1] + "#ERROR#ALREADY_CONNECTED#La estación ya tiene un Monitor conectado";
+				}
 
-				//Respondo positivamente al registro
-				respuesta = "REGISTER_RESULT#" + registro[1] + "#OK#Estacion registrada correctamente";
 		}else{
 			String correlationId = "";
-			if (registro.length > 1) {
+
+			if(registro.length > 1){
 				correlationId = registro[1];
 			}
 			respuesta = "ERROR#" + correlationId + "#INVALID_FIELD#Registro no válido";
@@ -111,8 +115,7 @@ public class HiloWM extends Thread {
 	/*
      * Procesa los mensajes recibidos desde el Monitor.
      */
-    public String procesarMensaje(String p_Cadena)
-    {
+    public String procesarMensaje(String p_Cadena){
         String[] campos = p_Cadena.split("#", -1);
         String respuesta = "";
 
@@ -242,17 +245,23 @@ public class HiloWM extends Thread {
 					this.escribeSocket(skCliente, respuesta);
 				}
 			}
-
-			//Cierro la conexión
-			skCliente.close();
-
+        } catch (Exception e) {
+        	System.out.println("Error: " + e.toString());
+        } finally{
+			//Si la conexión se había registrado se elimina de la lista de estaciones conectadas
 			if(registrada){
+				WM_Central.cerrarConexion(stationId);
 				System.out.println("SRV: Conexión cerrada con la estación " + stationId);
 			}else{
-				System.out.println("SRV: Conexión cerrada con estación no registrado");
+				System.out.println("SRV: Conexión cerrada sin estación registrada");
 			}
-        } catch (Exception e) {
-          System.out.println("Error: " + e.toString());
-        }
+
+			//Se intenta cerrar siempre el socket con el cliente si se ha producido error como si no
+			try {
+				skCliente.close();
+			} catch (Exception e) {
+				System.out.println("Error al cerrar socket: " + e.toString());
+			}
+		}
     }
 }
