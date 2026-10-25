@@ -5,46 +5,147 @@ import java.util.UUID;
 
 public class WM_WS_M {
 
+	private volatile boolean running = true;
+	private volatile String engineHealth = "UNKNOWN";
+	private volatile String engineCause = "";
+	private volatile String engineSessionId = "";
+
 	/*
 	* Lee datos del socket. Supone que se le pasa un buffer con hueco 
 	*	suficiente para los datos. Devuelve el numero de bytes leidos o
 	* 0 si se cierra fichero o -1 si hay error.
 	*/
-	public String leeSocket (Socket p_sk, String p_Datos)
-	{
-		try
+	public String leeSocket (Socket p_sk)
 		{
-			InputStream aux = p_sk.getInputStream();
-			DataInputStream flujo = new DataInputStream( aux );
-			p_Datos = flujo.readUTF();
+			try {
+				DataInputStream flujo = new DataInputStream(p_sk.getInputStream());
+				return flujo.readUTF();
+			} catch (EOFException e) {
+				return null;
+			} catch (Exception e) {
+				System.out.println("Error al leer del socket: " + e.toString());
+				return null;
+			}
 		}
-		catch (Exception e)
-		{
-			System.out.println("Error: " + e.toString());
-		}
-      return p_Datos;
-	}
+
 
 	/*
 	* Escribe dato en el socket cliente. Devuelve numero de bytes escritos,
 	* o -1 si hay error.
 	*/
-	public void escribeSocket (Socket p_sk, String p_Datos)
+	public void escribeSocket (Socket p_sk, String p_Datos) throws IOException
 	{
-		try
-		{
-			OutputStream aux = p_sk.getOutputStream();
-			DataOutputStream flujo= new DataOutputStream( aux );
-			flujo.writeUTF(p_Datos);      
-		}
-		catch (Exception e)
-		{
-			System.out.println("Error: " + e.toString());
-		}
-		return;
+		 OutputStream aux = p_sk.getOutputStream();
+		DataOutputStream flujo = new DataOutputStream(aux);
+		flujo.writeUTF(p_Datos);
+		flujo.flush();
 	}
 	
-	
+	private void HiloEngine(Socket Engine){
+
+		try {
+       		Engine.setSoTimeout(5000);
+   		} catch (SocketException e) {
+       		running = false;
+       		return;
+   		}
+
+		while(running){
+			String messageId = UUID.randomUUID().toString();
+			try {
+    			escribeSocket(Engine, "HEALTH_CHECK#" + messageId + "#" + Instant.now().toString());
+			} catch (IOException e) {
+    			System.out.println("Error al escribir en el socket: " + e.toString());	
+    		return;
+			}
+        	
+			
+			String Respuesta = leeSocket(Engine);
+
+			if(Respuesta == null){
+				engineSessionId = "";
+				engineCause = "ENGINE_TIMEOUT";
+    			engineHealth = "KO";
+    			System.out.println("Engine sin respuesta. Esperando nueva conexion...");
+   		 		return;
+			}
+			else{
+				String[] c = Respuesta.split("#",-1);
+				if(c.length == 4 && c[0].equals("HEALTH_RESULT") && c[1].equals(messageId) && (c[2].equals("OK") || c[2].equals("KO"))){
+					engineSessionId = c[3];
+					if (c[2].equals("KO")) {
+						engineCause = "ENGINE_KO";
+					} else {
+						engineCause = "";
+					}
+					engineHealth = c[2];  
+				}
+				else{
+					System.out.println("Respuesta invalida del Engine: " + Respuesta);
+    				engineSessionId = "";
+					engineCause = "ENGINE_KO";
+    				engineHealth = "KO";
+				}
+			}
+			try {
+            	Thread.sleep(1000);
+        	} catch (InterruptedException e) {
+            	return;
+        	}
+		}
+	}
+
+	private void HiloCentral(Socket Central, String stationId){
+		String UltimoNotificado = "UNKNOWN";
+		while(running){
+			String Actual = engineHealth;
+			String causa = engineCause;
+			String sesion = engineSessionId;
+
+			if(Actual.equals("KO") && !UltimoNotificado.equals("KO")){
+				String trama = "INCIDENT#" + UUID.randomUUID() + "#" + stationId + "#" + causa + "#" + sesion + "#" + Instant.now();
+    			try	{
+					escribeSocket(Central, trama);
+				}
+				catch (Exception e)
+				{
+					System.out.println("Conexion con WM_Central perdida");
+					return;
+				}
+				System.out.println("INCIDENCIA en " + stationId + ": " + causa);
+			}
+			else if(Actual.equals("OK") && UltimoNotificado.equals("KO")){
+				String trama = "RECOVERY#" + UUID.randomUUID() + "#" + stationId + "#" + Instant.now();
+   				try{
+					escribeSocket(Central, trama);
+				}
+				catch (Exception e)
+				{
+					System.out.println("Conexion con WM_Central perdida");
+					return;
+				}
+				System.out.println("Estacion " + stationId + " recuperada");
+			}	
+			UltimoNotificado = Actual;
+
+			String trama = "MONITOR_HEARTBEAT#" + UUID.randomUUID() + "#" + stationId + "#" + Actual + "#" + Instant.now();
+    		try{
+				escribeSocket(Central, trama);
+			}
+			catch (Exception e)
+			{
+				System.out.println("Conexion con WM_Central perdida");
+				return;
+				}
+
+			try {
+            	Thread.sleep(1000);
+			} catch (InterruptedException e) {
+				return;
+			}
+		}
+	}
+
 	/**
 	 * @param args
 	 */
@@ -79,7 +180,16 @@ public class WM_WS_M {
 
 			//Creo el socket cliente y se conecta con el servidor.
 
-			Socket skCliente = new Socket(hostCentral, puertoCentralInt);
+			Socket skCliente = null;
+			while(skCliente == null){  
+				try{ 
+					skCliente = new Socket(hostCentral, puertoCentralInt);
+				}
+				catch(ConnectException e){
+					System.out.println("Central no disponible, reintentando");
+					Thread.sleep(1000);
+				}
+			}
 
 			System.out.println("Monitor de la estacion " + stationId + " iniciado");
 			System.out.println("Puerto reservado para el Engine: " + puertoEngine);
@@ -95,7 +205,7 @@ public class WM_WS_M {
 			wm_ws_m.escribeSocket(skCliente, cadena);
 			
 			//Recibo la respuesta del servidor
-			respuesta = wm_ws_m.leeSocket(skCliente, respuesta);
+			respuesta = wm_ws_m.leeSocket(skCliente);
 			
 			if(respuesta == null){
 				System.out.println("WM_Central ha cerrado la conexion");
@@ -109,28 +219,57 @@ public class WM_WS_M {
 			//Se divide la respuesta para comprobar si Central ha aceptado el registro.
             String[] camposRespuesta = respuesta.split("#", -1);
 
-            if (camposRespuesta.length < 3 || camposRespuesta[0].compareTo("REGISTER_RESULT") != 0 || camposRespuesta[2].compareTo("OK") != 0){
+            if (camposRespuesta.length != 5 || camposRespuesta[0].compareTo("REGISTER_RESULT") != 0 || camposRespuesta[1].compareTo(messageId) != 0 || camposRespuesta[2].compareTo("OK") != 0 || camposRespuesta[3].compareTo("") != 0){
                 System.out.println("La estacion no ha sido registrada");
                 skCliente.close();
                 return;
             }
 
-            System.out.println("Estacion registrada correctamente");
+			System.out.println("Estacion registrada correctamente");
 
-            //PROVISIONAL
-            //prueba la conexión con Central.
-            //Cuando se implemente el Engine sustituiremos UNKNOWN por el resultado real del Heartbeat.
-            while (true)
-            {
-                messageId = UUID.randomUUID().toString();
+			ServerSocket SocketEngine = new ServerSocket(Integer.parseInt(puertoEngine));
+			final Socket socketCentral = skCliente;
+			final String id = stationId;
+			new Thread(() -> wm_ws_m.HiloCentral(socketCentral, id)).start();
+			while(true){
+				Socket skEngine = SocketEngine.accept();
+				skEngine.setSoTimeout(2000);
 
-                cadena = "MONITOR_HEARTBEAT#" + messageId + "#" + stationId + "#UNKNOWN#" + Instant.now().toString(); 
-                wm_ws_m.escribeSocket(skCliente, cadena);
+				String hello = wm_ws_m.leeSocket(skEngine);
+				String[] h;
 
-                System.out.println("Mensaje de vida enviado a WM_Central");
+				if (hello == null) {
+					h = new String[0];
+				} else {
+					h = hello.split("#", -1);
+				}
 
-                Thread.sleep(1000);
-            }
+				if (h.length != 3 || !h[0].equals("ENGINE_HELLO")	|| h[1].equals("") || h[2].equals("")){
+					String correlationId = "";
+
+					if (h.length > 1)
+						correlationId = h[1];
+
+					wm_ws_m.escribeSocket(skEngine,
+							"ERROR#" + correlationId
+							+ "#INVALID_FIELD#Hello invalido");
+					skEngine.close();
+					continue;
+				}
+
+				if (h[2].compareTo(stationId) != 0)
+				{
+					wm_ws_m.escribeSocket(skEngine,"ENGINE_HELLO_RESULT#" + h[1] + "#ERROR#UNKNOWN_STATION");
+					continue;
+				}
+				wm_ws_m.escribeSocket(skEngine, "ENGINE_HELLO_RESULT#" + h[1] + "#OK#");
+				System.out.println("Engine conectado");
+				wm_ws_m.engineHealth = "OK";
+				wm_ws_m.engineCause = "";
+				wm_ws_m.engineSessionId = "";
+				new Thread(()->wm_ws_m.HiloEngine(skEngine)).start();
+			}
+
 		}
 		catch (NumberFormatException e)
         {
@@ -139,10 +278,6 @@ public class WM_WS_M {
         catch (ConnectException e)
         {
             System.out.println("Error: no se puede conectar con WM_Central");
-        }
-        catch (InterruptedException e)
-        {
-            System.out.println("El Monitor ha sido interrumpido");
         }
 		catch(Exception e) {
 			System.out.println("Error: " + e.toString());

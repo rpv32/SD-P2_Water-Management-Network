@@ -1,19 +1,25 @@
 import java.lang.Exception;
 import java.net.Socket;
 import java.io.*;
+import java.net.SocketTimeoutException;
+import java.time.Instant;
 
 public class HiloWM extends Thread {
 
 	private Socket skCliente;
-	
+	private DataBaseManager db;
+
 	private String stationId;
 	private boolean registrada;
+	private int timeoutMonitor;
 
-	public HiloWM(Socket p_cliente)
+	public HiloWM(Socket p_cliente, int TimeoutMon, DataBaseManager db)
 	{
+		this.db = db;
 		this.skCliente = p_cliente;
 		this.stationId = "";
 		this.registrada = false;
+		this.timeoutMonitor = TimeoutMon;
 	}
 	
 	/*
@@ -21,7 +27,7 @@ public class HiloWM extends Thread {
 	*	suficiente para los datos. Devuelve el numero de bytes leidos o
 	* 	null si hay error.
 	*/
-	public String leeSocket (Socket p_sk, String p_Datos)
+	public String leeSocket (Socket p_sk, String p_Datos) throws SocketTimeoutException
 	{
 		try
 		{
@@ -33,6 +39,10 @@ public class HiloWM extends Thread {
 		catch(EOFException e) 
 		{
 			p_Datos = null;
+		}
+		catch (SocketTimeoutException e)
+		{
+    	throw e;
 		}
 		catch (Exception e)
 		{
@@ -71,22 +81,30 @@ public class HiloWM extends Thread {
 		//Divido la trama
 		String[] registro = p_Cadena.split("#", -1);
 		String respuesta = "";
-		
 		//Compruebo que la trama sea válida
 		if((registro.length == 3) && (registro[0].compareTo("REGISTER") == 0) && 
 			(registro[1].compareTo("") != 0 && registro[2].compareTo("") != 0)){
-				
-				//Compruebo que la estación no esté ya conectada
-				if(WM_Central.registrarConexion(registro[2])){
-					//Registro correcto
-					this.stationId = registro[2];
-					this.registrada = true;
+				try{
 
-					System.out.println("SRV: ID de la estación " + stationId);
-					respuesta = "REGISTER_RESULT#" + registro[1] + "#OK##Estación registrada correctamente";
-				}else{
-					//La estación ya estaba conectada
-					respuesta = "REGISTER_RESULT#" + registro[1] + "#ERROR#ALREADY_CONNECTED#La estación ya tiene un Monitor conectado";
+					if(!db.existeEstacion(registro[2])){
+						return "REGISTER_RESULT#" + registro[1] + "#ERROR#UNKNOWN_STATION#La estacion no existe en la base de datos";
+					}
+					
+					//Compruebo que la estación no esté ya conectada
+					if(WM_Central.registrarConexion(registro[2])){
+						//Registro correcto
+						this.stationId = registro[2];
+						this.registrada = true;
+						db.marcarMonitorConectado(this.stationId);
+
+						System.out.println("SRV: ID de la estación " + stationId);
+						respuesta = "REGISTER_RESULT#" + registro[1] + "#OK##Estación registrada correctamente";
+					}else{
+						//La estación ya estaba conectada
+						respuesta = "REGISTER_RESULT#" + registro[1] + "#ERROR#ALREADY_CONNECTED#La estación ya tiene un Monitor conectado";
+					}
+				}catch(Exception e){
+					respuesta = "REGISTER_RESULT#" + registro[1] + "#ERROR#PERSISTENCE_ERROR#Error al validar o registrar la estacion";
 				}
 
 		}else{
@@ -138,7 +156,11 @@ public class HiloWM extends Thread {
                 
                 respuesta = "ERROR#" + correlationId + "#ALREADY_REGISTERED#La conexion ya esta registrada";
             }else{
-                respuesta = realizarRegistro(p_Cadena);
+				if (campos.length != 3) {
+    				respuesta = crearError(campos, "BAD_FIELD_COUNT", "Numero incorrecto de campos");
+				} else {
+    				respuesta = realizarRegistro(p_Cadena);
+				}
             }
         }else if(campos[0].compareTo("MONITOR_HEARTBEAT") == 0){
             //Mensaje de vida del Monitor.
@@ -163,7 +185,18 @@ public class HiloWM extends Thread {
 				//Si el estado del Engine no es válido
                 respuesta = crearError(campos,"INVALID_FIELD","El estado del Engine no es valido");
 
-            }else{
+            }
+			else{
+				 try
+					{
+						Instant.parse(campos[4]);
+						db.registrarHeartbeat(stationId);
+					}
+					catch (Exception e)
+					{
+						respuesta = crearError(campos,"INVALID_FIELD","Fecha no valida");
+						return respuesta;
+					}
                 System.out.println("SRV: Heartbeat de " + stationId + ". Estado del Engine: " + campos[3]);
                 //Heartbeat correcto no necesita respuesta.
                 respuesta = "";
@@ -187,10 +220,32 @@ public class HiloWM extends Thread {
 				//Si algún campo del mensaje está vacío
                 respuesta = crearError(campos, "INVALID_FIELD", "La incidencia contiene campos vacios");
 
-            } else{
-                System.out.println("SRV: Incidencia en " + stationId + ". Causa: " + campos[3]);
-                respuesta = "";
-            }
+            }else if (campos[3].compareTo("ENGINE_KO") != 0 && campos[3].compareTo("ENGINE_TIMEOUT") != 0){
+					respuesta = crearError(campos,
+							"INVALID_FIELD",
+							"La causa de la incidencia no es valida");
+				}
+				else
+				{
+					try
+					{
+						Instant.parse(campos[5]);
+						db.abrirIncidencia(campos[2], campos[3], campos[4], campos[1]);
+					}
+					catch (Exception e)
+					{
+						respuesta = crearError(campos,
+								"INVALID_FIELD",
+								"Fecha no valida");
+						return respuesta;
+					}
+
+					System.out.println(
+							"SRV: Incidencia en " + stationId
+							+ ". Causa: " + campos[3]);
+
+					respuesta = "";
+				}
         }else if(campos[0].compareTo("RECOVERY") == 0){
             //Aviso de recuperación.
             //RECOVERY#messageId#stationId#occurredAt
@@ -210,10 +265,27 @@ public class HiloWM extends Thread {
 				//Si algún campo del mensaje está vacío
                 respuesta = crearError(campos, "INVALID_FIELD", "La recuperacion contiene campos vacios");
 
-            }else{
-                System.out.println("SRV: La estación " + stationId + " vuelve a estar operativa");
-                respuesta = "";
-            }
+            }else
+			{
+				try
+				{
+					Instant.parse(campos[3]);
+					db.cerrarIncidencia(campos[2]);
+				}
+				catch (Exception e)
+				{
+					respuesta = crearError(campos,
+							"INVALID_FIELD",
+							"Fecha no valida");
+					return respuesta;
+				}
+
+				System.out.println(
+						"SRV: La estacion " + stationId
+						+ " vuelve a estar operativa");
+
+				respuesta = "";
+			}
         }else{
             //Operación no reconocida.
             respuesta = crearError(campos, "UNKNOWN_OPERATION", "Operacion desconocida");
@@ -229,6 +301,8 @@ public class HiloWM extends Thread {
     	* Se leen mensajes hasta que el Monitor cierra la conexión.
         */
         try {
+			skCliente.setSoTimeout(timeoutMonitor);
+
 			while(true){
 				//Leo el mensaje enviado por el cliente
 				Cadena = this.leeSocket (skCliente, Cadena);
@@ -245,11 +319,21 @@ public class HiloWM extends Thread {
 					this.escribeSocket(skCliente, respuesta);
 				}
 			}
+		}catch (SocketTimeoutException e){
+    		System.out.println(
+            "SRV: Timeout de la estacion " + stationId);
         } catch (Exception e) {
         	System.out.println("Error: " + e.toString());
         } finally{
 			//Si la conexión se había registrado se elimina de la lista de estaciones conectadas
 			if(registrada){
+
+				try{
+					db.marcarMonitorDesconectado(stationId);
+				}catch(Exception e){
+					System.out.println("Error en la base de datos al marcar la desconexion de "+stationId+":"+e.toString());
+				}
+
 				WM_Central.cerrarConexion(stationId);
 				System.out.println("SRV: Conexión cerrada con la estación " + stationId);
 			}else{

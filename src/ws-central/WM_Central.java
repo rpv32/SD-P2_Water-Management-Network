@@ -7,6 +7,7 @@ public class WM_Central {
 	//Estaciones que tiene un Monitor conectado
 	//Luego cuando se cree SQLite se guardaran en la base de datos.
 	private static Set<String> estacionesConectadas = new HashSet<String>();
+	private static DataBaseManager db;
 
 	//Registra una estación como conectada, si ya estaba conectada devuelve false, si no devuelve true
 	public static synchronized boolean registrarConexion(String stationId){
@@ -69,6 +70,10 @@ public class WM_Central {
 		*/
 		try
 		{
+
+			db = new DataBaseManager("wm.db");
+            db.marcarTodasDesconectadas();
+
 			ServerSocket skServidor = new ServerSocket(Integer.parseInt(puerto));
 			System.out.println("WM_Central iniciado.");
 		    System.out.println("Escuchando el puerto " + puerto);
@@ -88,7 +93,7 @@ public class WM_Central {
 		        System.out.println("Nueva estación conectada desde: " + skCliente.getInetAddress().getHostAddress());
 
 				//Cada conexion se atiende en un hilo diferente para poder aceptar varias conexiones a la vez
-		        Thread hilo = new HiloWM(skCliente);
+		        Thread hilo = new HiloWM(skCliente, 5000, db);
 		        hilo.start();
 			}
 		}
