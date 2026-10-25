@@ -232,24 +232,40 @@ public class DataBaseManager {
         }
     }
 
-    // Se ejecuta cada segundo por estacion: solo actualiza marcas de tiempo, sin transaccion
-    // ni recalculo (un heartbeat no cambia ningun factor del estado).
-    public synchronized void registrarHeartbeat(String stationId) {
+    // Guardo la salud comunicada por el Monitor y recalculo el estado visible.
+    // La fecha indica cuando Central ha recibido el heartbeat.
+    public synchronized void registrarHeartbeat(String stationId, String engineHealth) throws SQLException {
+
+        if (!"OK".equals(engineHealth) && !"KO".equals(engineHealth) && !"UNKNOWN".equals(engineHealth)) {
+            throw new IllegalArgumentException("Estado del Engine no valido");
+        }
         String t = ahora();
         try {
-            update("UPDATE station_runtime_state "
-                 + "SET last_monitor_heartbeat_at = ?, last_engine_check_at = ?, updated_at = ? "
-                 + "WHERE station_id = ?",
-                 t, t, t, stationId);
+            comenzar();
+
+            int filas = update(
+                    "UPDATE station_runtime_state "
+                    + "SET last_monitor_heartbeat_at = ?, "
+                    + "    engine_health = ?, updated_at = ? "
+                    + "WHERE station_id = ?",
+                    t, engineHealth, t, stationId);
+
+            if (filas != 1) {
+                throw new SQLException("La estacion no tiene estado persistente: " + stationId);
+            }
+
+            recalcularEstadoVisible(stationId);
+            confirmar();
         } catch (SQLException e) {
-            System.out.println("Error BD (registrarHeartbeat): " + e.getMessage());
+            deshacer();
+            throw e;
         }
     }
 
     // Aplica la prioridad de estados.md. Se llama dentro de las transacciones de los demas metodos.
     private void recalcularEstadoVisible(String stationId) throws SQLException {
         String sql = "SELECT monitor_connected, blocked, engine_health, active_session_id, visible_status "
-                   + "FROM station_runtime_state WHERE station_id = ?";
+                + "FROM station_runtime_state WHERE station_id = ?";
 
         int monitor;
         int bloqueada;

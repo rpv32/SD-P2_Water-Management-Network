@@ -2,13 +2,13 @@ import java.lang.Exception;
 import java.net.Socket;
 import java.io.*;
 import java.net.SocketTimeoutException;
+import java.sql.SQLException;
 import java.time.Instant;
-
 public class HiloWM extends Thread {
 
 	private Socket skCliente;
 	private DataBaseManager db;
-
+	
 	private String stationId;
 	private boolean registrada;
 	private int timeoutMonitor;
@@ -49,7 +49,7 @@ public class HiloWM extends Thread {
 			System.out.println("Error al leer del socket: " + e.toString());
 			p_Datos = null;
 		}
-      return p_Datos;
+    	return p_Datos;
 	}
 
 	/*
@@ -190,13 +190,21 @@ public class HiloWM extends Thread {
 				 try
 					{
 						Instant.parse(campos[4]);
-						db.registrarHeartbeat(stationId);
 					}
 					catch (Exception e)
 					{
 						respuesta = crearError(campos,"INVALID_FIELD","Fecha no valida");
 						return respuesta;
 					}
+
+					try{
+						db.registrarHeartbeat(stationId, campos[3]);
+					} catch (SQLException e) {
+						System.out.println("Error BD al registrar heartbeat: " + e.getMessage());
+
+						return crearError(campos,"PERSISTENCE_ERROR","No se pudo registrar el heartbeat");
+					}
+
                 System.out.println("SRV: Heartbeat de " + stationId + ". Estado del Engine: " + campos[3]);
                 //Heartbeat correcto no necesita respuesta.
                 respuesta = "";
@@ -283,7 +291,7 @@ public class HiloWM extends Thread {
 				System.out.println(
 						"SRV: La estacion " + stationId
 						+ " vuelve a estar operativa");
-
+					
 				respuesta = "";
 			}
         }else{
