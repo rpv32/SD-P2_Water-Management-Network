@@ -9,6 +9,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
 import java.time.Instant;
+import java.util.UUID;
 
 /*
  * Unica clase que contiene SQL. El resto del sistema (HiloWM, WM_Central...)
@@ -296,7 +297,7 @@ public class DataBaseManager {
             nuevo = "LEAK";
         } else if (salud.equals("UNKNOWN")) {
             nuevo = "DISCONNECTED";       // Monitor conectado pero el Engine aun no ha confirmado OK
-        } else if (sesion != null) {
+        } else if (sesion != null && existe("SELECT 1 FROM watering_sessions "+ "WHERE session_id = ? AND status = 'RUNNING'",sesion)) {
             nuevo = "WATERING";
         } else {
             nuevo = "AVAILABLE";
@@ -395,6 +396,117 @@ public class DataBaseManager {
         } catch (SQLException e) {
             deshacer();
             System.out.println("Error BD (cambiarBloqueo): " + e.getMessage());
+        }
+    }
+
+    public record DecisionRiego(boolean autorizada,String sessionId,String codigo,String mensaje) { }
+
+    public synchronized DecisionRiego procesarSolicitud(String requestId,String stationId,String operatorId,int duracion,String requestedAt) throws SQLException {
+        if (duracion <= 0) {
+            throw new IllegalArgumentException("Duracion no valida");
+        }
+
+        try{
+            comenzar();
+
+            String sql = "SELECT station_id, operator_id,requested_duration_seconds, authorized_session_id,denial_code, denial_message FROM watering_requests WHERE request_id = ?";
+
+            try(PreparedStatement ps = conexion.prepareStatement(sql)){
+                ps.setString(1, requestId);
+
+                try(ResultSet rs = ps.executeQuery()){
+                    if(rs.next()){
+                        if (!stationId.equals(rs.getString("station_id")) || !operatorId.equals(rs.getString("operator_id")) || duracion != rs.getInt("requested_duration_seconds")) {
+                            throw new IllegalArgumentException("requestId repetido con datos diferentes");
+                        }
+
+                        String sessionId = rs.getString("authorized_session_id");
+
+                        
+                        DecisionRiego decision = new DecisionRiego(sessionId != null,sessionId,rs.getString("denial_code"),
+                            sessionId != null
+                                    ? "Solicitud ya autorizada"
+                                    : rs.getString("denial_message"));
+                        confirmar();
+                        return decision;
+                    }
+                }
+            }
+
+            if(!existe( "SELECT 1 FROM operators WHERE operator_id = ? AND active = 1",operatorId)){
+                confirmar();
+                return new DecisionRiego(false, null, "UNKNOWN_OPERATOR","El operario no existe o esta inactivo");
+            }
+
+            if (!existe("SELECT 1 FROM stations WHERE station_id = ? AND active = 1",stationId)) {
+                confirmar();
+                return new DecisionRiego(false, null, "UNKNOWN_STATION","La estacion no existe o esta inactiva");
+            }
+
+            String t = ahora();
+            String sessionId = UUID.randomUUID().toString();
+
+            int reservadas = update(
+                "UPDATE station_runtime_state "
+                + "SET active_session_id = ?, current_operator_id = ?, "
+                + "current_flow_lpm = 0, current_volume_litres = 0, updated_at = ? "
+                + "WHERE station_id = ? "
+                + "AND monitor_connected = 1 AND engine_health = 'OK' "
+                + "AND blocked = 0 AND visible_status = 'AVAILABLE' "
+                + "AND active_session_id IS NULL "
+                + "AND NOT EXISTS ("
+                + " SELECT 1 FROM station_incidents "
+                + " WHERE station_id = ? AND status = 'OPEN')",
+                sessionId, operatorId, t, stationId, stationId);
+            
+            if(reservadas==0){
+                update(
+                    "INSERT INTO watering_requests "
+                    + "(request_id, station_id, operator_id, "
+                    + "requested_duration_seconds, source, status, "
+                    + "denial_code, denial_message, requested_at, decided_at, "
+                    + "created_at, updated_at) "
+                    + "VALUES (?, ?, ?, ?, 'FO', 'DENIED', ?, ?, ?, ?, ?, ?)",
+                    requestId, stationId, operatorId,
+                    String.valueOf(duracion),
+                    "STATION_NOT_AVAILABLE",
+                    "La estacion no esta disponible o ya esta reservada",
+                    requestedAt, t, t, t);
+
+                confirmar();
+
+                return new DecisionRiego(false, null, "STATION_NOT_AVAILABLE","La estacion no esta disponible o ya esta reservada");
+            }
+
+            update(
+                "INSERT INTO watering_requests "
+                + "(request_id, station_id, operator_id, "
+                + "requested_duration_seconds, source, status, "
+                + "requested_at, decided_at, created_at, updated_at) "
+                + "VALUES (?, ?, ?, ?, 'FO', 'AUTHORIZED', ?, ?, ?, ?)",
+                requestId, stationId, operatorId,
+                String.valueOf(duracion), requestedAt, t, t, t);
+            
+            update(
+                "INSERT INTO watering_sessions "
+                + "(session_id, request_id, station_id, operator_id, "
+                + "planned_duration_seconds, status, created_at, updated_at) "
+                + "VALUES (?, ?, ?, ?, ?, 'AUTHORIZED', ?, ?)",
+                sessionId, requestId, stationId, operatorId,
+                String.valueOf(duracion), t, t);
+            
+            update(
+                "UPDATE watering_requests SET authorized_session_id = ? "
+                + "WHERE request_id = ?",
+                sessionId, requestId);
+
+            confirmar();
+
+            return new DecisionRiego(true, sessionId, null,"Solicitud autorizada; pendiente de inicio del Engine");
+
+        }catch(SQLException | IllegalArgumentException e){
+            deshacer();
+            throw e;
         }
     }
 }

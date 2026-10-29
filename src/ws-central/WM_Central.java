@@ -73,8 +73,12 @@ public class WM_Central {
 
 			db = new DataBaseManager("wm.db");
             db.marcarTodasDesconectadas();
-
 			ServerSocket skServidor = new ServerSocket(Integer.parseInt(puerto));
+
+			KafkaCentral kafka = new KafkaCentral(booststrapServer, db);
+			Runtime.getRuntime().addShutdownHook(new Thread(kafka::detener));
+			kafka.start();
+			
 			System.out.println("WM_Central iniciado.");
 		    System.out.println("Escuchando el puerto " + puerto);
 			System.out.println("BoostrapServer Kafka: " + booststrapServer);

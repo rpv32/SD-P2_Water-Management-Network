@@ -1,0 +1,215 @@
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.clients.consumer.OffsetAndMetadata;
+import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.errors.WakeupException;
+import org.apache.kafka.common.serialization.StringDeserializer;
+import org.apache.kafka.common.serialization.StringSerializer;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
+import java.util.UUID;
+
+public class KafkaCentral extends Thread {
+
+    private final String bootstrapServers;
+    private final DataBaseManager db;
+    private final ObjectMapper json = new ObjectMapper();
+
+    private volatile boolean ejecutando = true;
+    private volatile KafkaConsumer<String, String> consumidor;
+
+    public KafkaCentral(String bootstrapServers, DataBaseManager db) {
+        super("central-kafka");
+        this.bootstrapServers = bootstrapServers;
+        this.db = db;
+    }
+
+    private Properties propiedadesConsumidor() {
+        Properties p = new Properties();
+        p.put("bootstrap.servers", bootstrapServers);
+        p.put("group.id", "wm-central-requests");
+        p.put("key.deserializer", StringDeserializer.class.getName());
+        p.put("value.deserializer", StringDeserializer.class.getName());
+        p.put("enable.auto.commit", "false");
+        p.put("auto.offset.reset", "earliest");
+        p.put("allow.auto.create.topics", "false");
+        p.put("max.poll.records", "1");
+        return p;
+    }
+
+    private Properties propiedadesProductor() {
+        Properties p = new Properties();
+        p.put("bootstrap.servers", bootstrapServers);
+        p.put("key.serializer", StringSerializer.class.getName());
+        p.put("value.serializer", StringSerializer.class.getName());
+        p.put("acks", "all");
+        p.put("enable.idempotence", "true");
+        p.put("max.block.ms", "10000");
+        p.put("delivery.timeout.ms", "15000");
+        p.put("request.timeout.ms", "10000");
+        return p;
+    }
+
+    private String texto(JsonNode evento, String campo) {
+        JsonNode valor = evento.get(campo);
+
+        if (valor == null || !valor.isTextual()
+                || valor.asText().isBlank()) {
+            throw new IllegalArgumentException(
+                    "Campo obligatorio no valido: " + campo);
+        }
+
+        return valor.asText();
+    }
+
+    private void procesar(
+            String contenido,
+            KafkaProducer<String, String> productor) throws Exception {
+
+        JsonNode solicitud = json.readTree(contenido);
+
+        if (solicitud == null || !solicitud.isObject()) {
+            throw new IllegalArgumentException("Se esperaba un objeto JSON");
+        }
+
+        JsonNode version = solicitud.get("schemaVersion");
+
+        if (version == null || !version.isIntegralNumber()
+                || version.asInt() != 1) {
+            throw new IllegalArgumentException("schemaVersion no valida");
+        }
+
+        if (!"WATERING_REQUESTED".equals(texto(solicitud, "eventType"))) {
+            throw new IllegalArgumentException("Tipo de evento no valido");
+        }
+
+        String eventId = texto(solicitud, "eventId");
+        String requestId = texto(solicitud, "requestId");
+        String stationId = texto(solicitud, "stationId");
+        String operatorId = texto(solicitud, "operatorId");
+        String occurredAt = texto(solicitud, "occurredAt");
+
+        UUID.fromString(eventId);
+        UUID.fromString(requestId);
+        Instant.parse(occurredAt);
+
+        if (!operatorId.matches("[A-Za-z0-9_-]+")) {
+            throw new IllegalArgumentException("operatorId no valido");
+        }
+
+        JsonNode tiempo = solicitud.get("durationSeconds");
+
+        if (tiempo == null || !tiempo.isIntegralNumber()
+                || !tiempo.canConvertToInt() || tiempo.asInt() <= 0) {
+            throw new IllegalArgumentException("Duracion no valida");
+        }
+
+        System.out.println("KAFKA: solicitud " + requestId
+                + " de " + operatorId + " para " + stationId);
+
+        DataBaseManager.DecisionRiego decision = db.procesarSolicitud(
+                requestId, stationId, operatorId,
+                tiempo.asInt(), occurredAt);
+
+        ObjectNode respuesta = json.createObjectNode();
+        respuesta.put("schemaVersion", 1);
+        respuesta.put("eventId", UUID.randomUUID().toString());
+        respuesta.put("eventType", decision.autorizada()
+                ? "WATERING_AUTHORIZED" : "WATERING_DENIED");
+        respuesta.put("occurredAt", Instant.now().toString());
+        respuesta.put("requestId", requestId);
+        respuesta.put("stationId", stationId);
+        respuesta.put("operatorId", operatorId);
+        respuesta.put("message", decision.mensaje());
+
+        if (decision.autorizada()) {
+            respuesta.put("sessionId", decision.sessionId());
+        } else {
+            respuesta.put("errorCode", decision.codigo());
+        }
+
+        String topic = "wm.fo." + operatorId + ".events";
+
+        productor.send(new ProducerRecord<>(
+                topic, requestId,
+                json.writeValueAsString(respuesta))).get();
+
+        System.out.println("KAFKA: respuesta "
+                + respuesta.path("eventType").asText()
+                + " para " + requestId);
+    }
+
+    @Override
+    public void run() {
+        try (
+            KafkaConsumer<String, String> cliente =
+                    new KafkaConsumer<>(propiedadesConsumidor());
+            KafkaProducer<String, String> productor =
+                    new KafkaProducer<>(propiedadesProductor())
+        ) {
+            consumidor = cliente;
+            cliente.subscribe(List.of("wm.watering.requests"));
+
+            System.out.println("KAFKA: consumidor de solicitudes iniciado");
+
+            while (ejecutando) {
+                var registros = cliente.poll(Duration.ofMillis(500));
+
+                for (ConsumerRecord<String, String> registro : registros) {
+                    try {
+                        procesar(registro.value(), productor);
+
+                    } catch (JsonProcessingException
+                            | IllegalArgumentException e) {
+
+                        // Descartamos mensajes que no cumplen el contrato.
+                        System.err.println(
+                                "KAFKA: mensaje no valido en offset "
+                                + registro.offset() + ": " + e.getMessage());
+                    }
+
+                    cliente.commitSync(Map.of(
+                            new TopicPartition(
+                                    registro.topic(), registro.partition()),
+                            new OffsetAndMetadata(registro.offset() + 1)));
+                }
+            }
+
+        } catch (WakeupException e) {
+            if (ejecutando) {
+                System.err.println("KAFKA: receptor interrumpido: " + e);
+            }
+
+        } catch (Exception e) {
+            System.err.println("KAFKA: procesamiento detenido: " + e);
+            System.err.println(
+                    "La solicitud pendiente no se ha confirmado. "
+                    + "Revisa el error y reinicia Central.");
+
+        } finally {
+            ejecutando = false;
+            consumidor = null;
+        }
+    }
+
+    public void detener() {
+        ejecutando = false;
+
+        KafkaConsumer<String, String> cliente = consumidor;
+
+        if (cliente != null) {
+            cliente.wakeup();
+        }
+    }
+}

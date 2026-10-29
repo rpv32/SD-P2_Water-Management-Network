@@ -3,6 +3,20 @@ import java.io.*;
 import java.net.*;
 import java.util.Scanner;
 import java.util.UUID;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.errors.WakeupException;
+import org.apache.kafka.common.serialization.StringDeserializer;
+import org.apache.kafka.common.serialization.StringSerializer;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.Properties;
 
 public class Engine{
 
@@ -20,6 +34,12 @@ public class Engine{
     private boolean Fuga;
     private volatile boolean running;
     private volatile boolean monitorConectado;
+    private volatile String RequestId;
+    private volatile boolean RiegoKafka;
+    private final ObjectMapper json = new ObjectMapper();
+    private KafkaProducer<String, String> productor;
+    private KafkaConsumer<String, String> consumidor;
+    private volatile boolean kafkaEjecutando = true;
 
     public Engine(){
         ValvulaAbierta = false;
@@ -34,6 +54,12 @@ public class Engine{
         this.SessionId = "";
         this.OperatorId = "";
     }
+
+    //Topics
+    //docker exec broker /opt/kafka/bin/kafka-topics.sh --bootstrap-server broker:29092 --create --if-not-exists --topic wm.station.commands --partitions 1 --replication-factor 1
+    //docker exec broker /opt/kafka/bin/kafka-topics.sh --bootstrap-server broker:29092 --create --if-not-exists --topic wm.station.telemetry --partitions 1 --replication-factor 1
+    //docker exec broker /opt/kafka/bin/kafka-topics.sh --bootstrap-server broker:29092 --create --if-not-exists --topic wm.station.results --partitions 1 --replication-factor 1
+
 
     //Hilos
     public void HiloMonitor(Socket Monitor){
@@ -98,6 +124,175 @@ public class Engine{
                 return;
            }
            simularSegundo();
+        }
+    }
+
+    public void HiloKafka(String bootstrapServer){
+        Properties p = new Properties();
+        p.put("bootstrap.servers", bootstrapServer);
+        p.put("group.id", "wm-engine-" + StationId);
+        p.put("key.deserializer", StringDeserializer.class.getName());
+        p.put("value.deserializer", StringDeserializer.class.getName());
+        p.put("enable.auto.commit", "false");
+        p.put("auto.offset.reset", "latest");
+        p.put("allow.auto.create.topics", "false");
+
+        Properties productorProps = new Properties();
+        productorProps.put("bootstrap.servers", bootstrapServer);
+        productorProps.put("key.serializer",StringSerializer.class.getName());
+        productorProps.put("value.serializer",StringSerializer.class.getName());
+        productorProps.put("acks", "all");
+        productorProps.put("enable.idempotence", "true");
+
+        try(KafkaConsumer<String,String> cliente = new KafkaConsumer<>(p); KafkaProducer<String,String> productorKafka = new KafkaProducer<>(productorProps)){
+            consumidor = cliente;
+            productor = productorKafka;
+
+            cliente.subscribe(List.of("wm.station.commands"));
+
+            System.out.println("[ENGINE] Kafka conectado. Esperando ordenes.");
+
+            while(kafkaEjecutando && running){
+                var registros = cliente.poll(Duration.ofMillis(500));
+
+                for(ConsumerRecord<String,String> registro : registros){
+                    try{
+                        procesarOrden(registro.value(),productorKafka);
+                    }
+                    catch(Exception e){
+                        System.err.println("[ENGINE] Orden Kafka no valida: " + e.getMessage());
+                    }
+
+                    cliente.commitSync();
+                }
+            }
+        }catch(WakeupException e){
+            if (kafkaEjecutando && running) {
+                System.err.println("[ENGINE] Kafka interrumpido: " + e.getMessage());
+            }
+        }catch(Exception e){
+            System.err.println("[ENGINE] Kafka detenido: " + e.getMessage());
+        }
+        finally{
+            kafkaEjecutando = false;
+
+            if (consumidor != null) {
+                consumidor.close();
+            }
+
+            if (productor != null) {
+                productor.close(Duration.ofSeconds(5));
+            }
+        }
+    }
+
+    private void procesarOrden(String contenido, KafkaProducer<String, String> productorKafka) throws Exception{
+        JsonNode orden = json.readTree(contenido);
+
+        if(orden == null || !orden.isObject()){
+            throw new IllegalArgumentException("Se esperaba un objeto JSON");
+        }
+
+        if(!StationId.equals(orden.path("stationId").asText())){
+            return;
+        }
+
+        if(!"START_WATERING".equals(orden.path("eventType").asText())){
+            throw new IllegalArgumentException("Tipo de orden no soportado");
+        }
+
+        String sessionId = orden.path("sessionId").asText();
+        String requestId = orden.path("requestId").asText();
+        String operatorId = orden.path("operatorId").asText();
+        int duracion = orden.path("durationSeconds").asInt();
+
+        if (sessionId.isEmpty() || requestId.isEmpty() || operatorId.isEmpty() || duracion <= 0) {
+            throw new IllegalArgumentException("Campos obligatorios vacios");
+        }
+
+        boolean iniciado = IniciarRiegoKafka(sessionId, requestId, operatorId, duracion);
+
+        if (!iniciado) {
+            System.out.println("[ENGINE] No se pudo iniciar el riego solicitado");
+            return;
+        }
+
+        ObjectNode inicio = json.createObjectNode();
+        inicio.put("schemaVersion", 1);
+        inicio.put("eventId", UUID.randomUUID().toString());
+        inicio.put("eventType", "WATERING_STARTED");
+        inicio.put("occurredAt", Instant.now().toString());
+        inicio.put("requestId", requestId);
+        inicio.put("sessionId", sessionId);
+        inicio.put("stationId", StationId);
+        inicio.put("operatorId", operatorId);
+
+        productorKafka.send(new ProducerRecord<>("wm.station.results",StationId,json.writeValueAsString(inicio))).get();
+
+        System.out.println("[ENGINE] WATERING_STARTED publicado en Kafka.");
+    }
+
+    public synchronized void publicarTelemetria(){
+        if (productor == null || !RiegoKafka || RequestId.isEmpty()) {
+            return;
+        }
+
+        try{
+            ObjectNode muestra = json.createObjectNode();
+            muestra.put("schemaVersion", 1);
+            muestra.put("eventId", UUID.randomUUID().toString());
+            muestra.put("eventType", "WATERING_TELEMETRY");
+            muestra.put("occurredAt", Instant.now().toString());
+            muestra.put("requestId", RequestId);
+            muestra.put("sessionId", SessionId);
+            muestra.put("stationId", StationId);
+            muestra.put("operatorId", OperatorId);
+            muestra.put("sequence", SegundosRegados);
+            muestra.put("flowLitresPerMinute", Caudal);
+            muestra.put("volumeLitres", VolumenAcumulado);
+
+            productor.send(new ProducerRecord<>("wm.station.telemetry",StationId,json.writeValueAsString(muestra))).get();
+
+            System.out.println("[ENGINE] Telemetria publicada. Volumen: " + String.format("%.2f", VolumenAcumulado) + " L");
+
+        }catch(Exception e){
+            System.err.println("[ENGINE] Error al publicar telemetria: "+ e.getMessage());
+        }
+    }
+
+    public synchronized void publicarResultado(String Motivo){
+        if (productor == null || RequestId.isEmpty()) {
+            return;
+        }
+
+        try{
+            String motivoFinal;
+
+            if ("MONITOR_DISCONNECTED".equals(Motivo)) {
+                motivoFinal = "CENTRAL_DOWN";
+            } else {
+                motivoFinal = Motivo;
+            }
+
+            ObjectNode resultado = json.createObjectNode();
+            resultado.put("schemaVersion", 1);
+            resultado.put("eventId", UUID.randomUUID().toString());
+            resultado.put("eventType", "WATERING_FINISHED");
+            resultado.put("occurredAt", Instant.now().toString());
+            resultado.put("requestId", RequestId);
+            resultado.put("sessionId", SessionId);
+            resultado.put("stationId", StationId);
+            resultado.put("operatorId", OperatorId);
+            resultado.put("reason", motivoFinal);
+            resultado.put("durationSeconds", SegundosRegados);
+            resultado.put("volumeLitres", VolumenAcumulado);
+
+            productor.send(new ProducerRecord<>("wm.station.results",StationId,json.writeValueAsString(resultado))).get();
+
+            System.out.println("[ENGINE] WATERING_FINISHED publicado en Kafka.");
+
+        }catch(Exception e){
+             System.err.println("[ENGINE] Error al publicar resultado: "+ e.getMessage());
         }
     }
 
@@ -167,9 +362,10 @@ public class Engine{
         PararRiego("MANUAL_STOP");
     }
 
-    public void Iniciar(Socket Monitor){
+    public void Iniciar(Socket Monitor, String bootstrapServers){
         new Thread(() -> HiloMonitor(Monitor)).start();
         new Thread(() -> HiloSimulacion()).start();
+        new Thread(() -> HiloKafka(bootstrapServers)).start();
         Menu();
     }
 
@@ -200,8 +396,30 @@ public class Engine{
         this.VolumenAcumulado = 0;
         this.ValvulaAbierta = true;
         this.Regando = true;
-
+        this.RequestId = "";
+        this.RiegoKafka = false;
+        
         System.out.println("[ENGINE] Riego iniciado. Operario " + OperatorId + ", " + Duracion + " s");
+        return true;
+    }
+
+    public synchronized boolean IniciarRiegoKafka(String sessionId,String requestId,String operatorId,int duracion){
+        if(duracion <= 0 || Regando || Bloqueado ||Averiado || !monitorConectado){
+            return false;
+        }
+
+        this.SessionId = sessionId;
+        this.RequestId = requestId;
+        this.OperatorId = operatorId;
+        this.RiegoKafka = true;
+        this.DuracionObjetivo = duracion;
+        this.SegundosRegados = 0;
+        this.Caudal = 0;
+        this.VolumenAcumulado = 0;
+        this.ValvulaAbierta = true;
+        this.Regando = true;
+
+        System.out.println("[ENGINE] Riego Kafka iniciado. Sesion: "+ sessionId);
         return true;
     }
 
@@ -215,6 +433,8 @@ public class Engine{
 
             SessionId = "";
             OperatorId = "";
+            RequestId = "";
+            RiegoKafka = false;
         }
     }
 
@@ -283,7 +503,7 @@ public class Engine{
 
 
     public static void main(String[] args) {
-        if(args.length != 3){
+        if(args.length != 4){
             System.out.println("Debe indicar la direccion del monitor y su puerto");
             return;
         }
@@ -294,6 +514,7 @@ public class Engine{
         try{ 
             int PuertoMonitor = Integer.parseInt(args[1]);
             String stationId = args[2];
+            String BoostrapServer = args[3];
             Engine.StationId = stationId;
 
             Socket skSocket = new Socket(args[0], PuertoMonitor);
@@ -317,7 +538,7 @@ public class Engine{
 
            System.out.println("Engine conectado a la estacion " + Engine.StationId);
 
-            Engine.Iniciar(skSocket);
+            Engine.Iniciar(skSocket, BoostrapServer);
             System.exit(0);
 
         }catch(ConnectException e){
