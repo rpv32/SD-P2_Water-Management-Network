@@ -71,9 +71,10 @@ public class WM_Central {
 		try
 		{
 
+			ServerSocket skServidor = new ServerSocket(Integer.parseInt(puerto));
 			db = new DataBaseManager("wm.db");
             db.marcarTodasDesconectadas();
-			ServerSocket skServidor = new ServerSocket(Integer.parseInt(puerto));
+			
 
 			KafkaCentral kafka = new KafkaCentral(booststrapServer, db);
 			Runtime.getRuntime().addShutdownHook(new Thread(kafka::detener));
