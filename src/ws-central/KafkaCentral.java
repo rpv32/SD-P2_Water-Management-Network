@@ -144,6 +144,28 @@ public class KafkaCentral extends Thread {
         productor.send(new ProducerRecord<>(
                 topic, requestId,
                 json.writeValueAsString(respuesta))).get();
+        
+        if (decision.autorizada()) {
+            ObjectNode orden = json.createObjectNode();
+
+            orden.put("schemaVersion", 1);
+            orden.put("eventId", UUID.randomUUID().toString());
+            orden.put("eventType", "START_WATERING");
+            orden.put("occurredAt", Instant.now().toString());
+            orden.put("requestId", requestId);
+            orden.put("sessionId", decision.sessionId());
+            orden.put("stationId", stationId);
+            orden.put("operatorId", operatorId);
+            orden.put("durationSeconds", tiempo.asInt());
+
+            productor.send(new ProducerRecord<>(
+                    "wm.station.commands",
+                    stationId,
+                    json.writeValueAsString(orden))).get();
+
+            System.out.println("KAFKA: START_WATERING enviado a "
+                    + stationId + " para " + requestId);
+        }
 
         System.out.println("KAFKA: respuesta "
                 + respuesta.path("eventType").asText()
