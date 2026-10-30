@@ -55,6 +55,9 @@ public class WM_WS_M {
 			try {
     			escribeSocket(Engine, "HEALTH_CHECK#" + messageId + "#" + Instant.now().toString());
 			} catch (IOException e) {
+				engineSessionId = "";
+    		    engineCause = "ENGINE_TIMEOUT";
+	        	engineHealth = "KO";
     			System.out.println("Error al escribir en el socket: " + e.toString());	
     		return;
 			}
@@ -260,6 +263,7 @@ public class WM_WS_M {
 				if (h[2].compareTo(stationId) != 0)
 				{
 					wm_ws_m.escribeSocket(skEngine,"ENGINE_HELLO_RESULT#" + h[1] + "#ERROR#UNKNOWN_STATION");
+					skEngine.close();
 					continue;
 				}
 				wm_ws_m.escribeSocket(skEngine, "ENGINE_HELLO_RESULT#" + h[1] + "#OK#");
@@ -267,7 +271,7 @@ public class WM_WS_M {
 				wm_ws_m.engineHealth = "OK";
 				wm_ws_m.engineCause = "";
 				wm_ws_m.engineSessionId = "";
-				new Thread(()->wm_ws_m.HiloEngine(skEngine)).start();
+				wm_ws_m.HiloEngine(skEngine);
 			}
 
 		}

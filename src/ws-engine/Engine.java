@@ -17,6 +17,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Properties;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import org.apache.kafka.clients.consumer.OffsetAndMetadata;
+import org.apache.kafka.common.TopicPartition;
+import java.util.Map;
 
 public class Engine{
 
@@ -37,9 +41,11 @@ public class Engine{
     private volatile String RequestId;
     private volatile boolean RiegoKafka;
     private final ObjectMapper json = new ObjectMapper();
-    private KafkaProducer<String, String> productor;
+    private volatile KafkaProducer<String, String> productor;
     private KafkaConsumer<String, String> consumidor;
     private volatile boolean kafkaEjecutando = true;
+    private ObjectNode resultadoPendiente;
+
 
     public Engine(){
         ValvulaAbierta = false;
@@ -105,13 +111,9 @@ public class Engine{
               }
         }    
         if (running) {
-            System.out.println("\nConexion con el Monitor perdida. Cerrando Engine.");
+            System.out.println("\nConexion con el Monitor perdida. No se admiten nuevos riegos, el servicio ya iniciado puede finalizar");
             monitorConectado = false;
-            synchronized (this){
-                if (Regando){
-                    PararRiego("MONITOR_DISCONNECTED");
-                }
-            }
+            
         }
     }
 
@@ -124,6 +126,9 @@ public class Engine{
                 return;
            }
            simularSegundo();
+           publicarTelemetria();
+           ComprobarTiempo();
+           EnviarResultado();
         }
     }
 
@@ -143,6 +148,10 @@ public class Engine{
         productorProps.put("value.serializer",StringSerializer.class.getName());
         productorProps.put("acks", "all");
         productorProps.put("enable.idempotence", "true");
+        productorProps.put("max.block.ms", "10000");
+        productorProps.put("delivery.timeout.ms", "15000");
+        productorProps.put("request.timeout.ms", "10000");
+
 
         try(KafkaConsumer<String,String> cliente = new KafkaConsumer<>(p); KafkaProducer<String,String> productorKafka = new KafkaProducer<>(productorProps)){
             consumidor = cliente;
@@ -159,11 +168,11 @@ public class Engine{
                     try{
                         procesarOrden(registro.value(),productorKafka);
                     }
-                    catch(Exception e){
-                        System.err.println("[ENGINE] Orden Kafka no valida: " + e.getMessage());
+                    catch(JsonProcessingException | IllegalArgumentException e){
+                        System.err.println("[ENGINE] Orden Kafka no valida en offset: " + e.getMessage());
                     }
 
-                    cliente.commitSync();
+                    cliente.commitSync(Map.of(new TopicPartition(registro.topic(),registro.partition()), new OffsetAndMetadata(registro.offset() + 1)));
                 }
             }
         }catch(WakeupException e){
@@ -175,14 +184,8 @@ public class Engine{
         }
         finally{
             kafkaEjecutando = false;
-
-            if (consumidor != null) {
-                consumidor.close();
-            }
-
-            if (productor != null) {
-                productor.close(Duration.ofSeconds(5));
-            }
+            productor = null;
+            consumidor = null;
         }
     }
 
@@ -232,13 +235,21 @@ public class Engine{
         System.out.println("[ENGINE] WATERING_STARTED publicado en Kafka.");
     }
 
-    public synchronized void publicarTelemetria(){
-        if (productor == null || !RiegoKafka || RequestId.isEmpty()) {
+    public void publicarTelemetria(){
+        ObjectNode muestra;
+        KafkaProducer<String,String> productorAct = productor;
+
+        if(productorAct == null){
             return;
         }
 
-        try{
-            ObjectNode muestra = json.createObjectNode();
+        synchronized(this){
+            if (productor == null || !RiegoKafka || RequestId.isEmpty()) {
+                return;
+            }
+
+            muestra = json.createObjectNode();
+
             muestra.put("schemaVersion", 1);
             muestra.put("eventId", UUID.randomUUID().toString());
             muestra.put("eventType", "WATERING_TELEMETRY");
@@ -250,7 +261,8 @@ public class Engine{
             muestra.put("sequence", SegundosRegados);
             muestra.put("flowLitresPerMinute", Caudal);
             muestra.put("volumeLitres", VolumenAcumulado);
-
+        }
+        try{
             productor.send(new ProducerRecord<>("wm.station.telemetry",StationId,json.writeValueAsString(muestra))).get();
 
             System.out.println("[ENGINE] Telemetria publicada. Volumen: " + String.format("%.2f", VolumenAcumulado) + " L");
@@ -260,39 +272,46 @@ public class Engine{
         }
     }
 
-    public synchronized void publicarResultado(String Motivo){
-        if (productor == null || RequestId.isEmpty()) {
+    private ObjectNode crearResultado(String motivo) {
+        ObjectNode resultado = json.createObjectNode();
+
+        resultado.put("schemaVersion", 1);
+        resultado.put("eventId", UUID.randomUUID().toString());
+        resultado.put("eventType", "WATERING_FINISHED");
+        resultado.put("occurredAt", Instant.now().toString());
+        resultado.put("requestId", RequestId);
+        resultado.put("sessionId", SessionId);
+        resultado.put("stationId", StationId);
+        resultado.put("operatorId", OperatorId);
+        resultado.put("reason", motivo);
+        resultado.put("durationSeconds", SegundosRegados);
+        resultado.put("volumeLitres", VolumenAcumulado);
+        return resultado;
+    }
+
+    private void EnviarResultado(){
+        ObjectNode resultado;
+        KafkaProducer<String, String> ProductorAct = productor;
+
+        synchronized(this){
+            resultado = resultadoPendiente;
+        }
+
+        if(resultado == null || ProductorAct == null){
             return;
         }
 
         try{
-            String motivoFinal;
-
-            if ("MONITOR_DISCONNECTED".equals(Motivo)) {
-                motivoFinal = "CENTRAL_DOWN";
-            } else {
-                motivoFinal = Motivo;
+            ProductorAct.send(new ProducerRecord<>("wm.station.results",StationId,json.writeValueAsString(resultado))).get();
+            
+            synchronized(this){
+                if(resultadoPendiente == resultado){
+                    resultadoPendiente = null;
+                }
             }
-
-            ObjectNode resultado = json.createObjectNode();
-            resultado.put("schemaVersion", 1);
-            resultado.put("eventId", UUID.randomUUID().toString());
-            resultado.put("eventType", "WATERING_FINISHED");
-            resultado.put("occurredAt", Instant.now().toString());
-            resultado.put("requestId", RequestId);
-            resultado.put("sessionId", SessionId);
-            resultado.put("stationId", StationId);
-            resultado.put("operatorId", OperatorId);
-            resultado.put("reason", motivoFinal);
-            resultado.put("durationSeconds", SegundosRegados);
-            resultado.put("volumeLitres", VolumenAcumulado);
-
-            productor.send(new ProducerRecord<>("wm.station.results",StationId,json.writeValueAsString(resultado))).get();
-
-            System.out.println("[ENGINE] WATERING_FINISHED publicado en Kafka.");
-
-        }catch(Exception e){
-             System.err.println("[ENGINE] Error al publicar resultado: "+ e.getMessage());
+        }
+        catch(Exception e){
+            System.err.println("[ENGINE] Resultado pendiente de envio:" + e.getMessage());
         }
     }
 
@@ -345,6 +364,13 @@ public class Engine{
                     case "2":
                         if (sessionActiva().isEmpty()) System.out.println("No hay riego en curso");
                         else PararRiego("MANUAL_STOP");
+                        EnviarResultado();
+
+                        synchronized(this){
+                            if(resultadoPendiente != null){
+                                System.err.println("[ENGINE] Aviso: queda un resultado sin confirmar en Kafka.");
+                            }
+                        }
                         break;
                     case "3":
                         setAveria(estadoSalud().equals("OK"));   // alterna OK <-> KO
@@ -377,14 +403,16 @@ public class Engine{
         Caudal = 10 + Math.random() * 5;           
         VolumenAcumulado += Caudal / 60.0;          
         SegundosRegados++;
+    }
 
-        if (SegundosRegados >= DuracionObjetivo) {
+    private synchronized void ComprobarTiempo(){
+        if(Regando && SegundosRegados >= DuracionObjetivo){
             PararRiego("TIME_LIMIT");
         }
     }
 
     public synchronized boolean IniciarRiego(String OperatorId, int Duracion){
-        if (Duracion <= 0 || Regando || Bloqueado || Averiado || !monitorConectado) {
+        if (Duracion <= 0 || Regando || Bloqueado || Averiado || !monitorConectado || resultadoPendiente != null) {
             return false;
         }
 
@@ -404,7 +432,7 @@ public class Engine{
     }
 
     public synchronized boolean IniciarRiegoKafka(String sessionId,String requestId,String operatorId,int duracion){
-        if(duracion <= 0 || Regando || Bloqueado ||Averiado || !monitorConectado){
+        if(duracion <= 0 || Regando || Bloqueado ||Averiado || !monitorConectado || resultadoPendiente != null){
             return false;
         }
 
@@ -430,6 +458,10 @@ public class Engine{
             Caudal = 0;
 
             System.out.println("[ENGINE] Riego finalizado (" + Motivo + "). Duracion: "  + SegundosRegados + " s, volumen: " + String.format("%.2f", VolumenAcumulado) + " L");
+
+            if(RiegoKafka && !RequestId.isEmpty()){
+                resultadoPendiente = crearResultado(Motivo);
+            }
 
             SessionId = "";
             OperatorId = "";
