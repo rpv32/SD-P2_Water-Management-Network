@@ -150,6 +150,88 @@ public class KafkaCentral extends Thread {
                 + " para " + requestId);
     }
 
+
+     private int entero(JsonNode evento, String campo) {
+        JsonNode valor = evento.get(campo);
+
+        if (valor == null || !valor.isIntegralNumber() || !valor.canConvertToInt()) {
+            throw new IllegalArgumentException("Entero no valido: " + campo);
+        }
+        return valor.intValue();
+    }
+
+    private double numero(JsonNode evento, String campo) {
+        JsonNode valor = evento.get(campo);
+
+        if (valor == null || !valor.isNumber() || !Double.isFinite(valor.doubleValue())) {
+            throw new IllegalArgumentException("Numero no valido: " + campo);
+        }
+        return valor.doubleValue();
+    }   
+
+    private void procesarEvento(String topic, String contenido,KafkaProducer<String, String> productor) throws Exception {
+
+        JsonNode e = json.readTree(contenido);
+
+        if (e == null || !e.isObject() || entero(e, "schemaVersion") != 1) {
+            throw new IllegalArgumentException("Evento no valido");
+        }
+
+        String tipo = texto(e, "eventType");
+        String eventId = texto(e, "eventId");
+        String sessionId = texto(e, "sessionId");
+        String requestId = texto(e, "requestId");
+        String stationId = texto(e, "stationId");
+        String operatorId = texto(e, "operatorId");
+        String fecha = texto(e, "occurredAt");
+
+        UUID.fromString(eventId);
+        UUID.fromString(sessionId);
+        UUID.fromString(requestId);
+        Instant.parse(fecha);
+
+        if (!operatorId.matches("[A-Za-z0-9_-]+")) {
+            throw new IllegalArgumentException("Operario no valido");
+        }
+
+        String topicEsperado = "WATERING_TELEMETRY".equals(tipo)
+                ? "wm.station.telemetry" : "wm.station.results";
+
+        if (!topicEsperado.equals(topic)) {
+            throw new IllegalArgumentException("Topic incorrecto");
+        }
+
+        boolean reenviar;
+
+        switch (tipo) {
+            case "WATERING_STARTED":
+                reenviar = db.registrarInicio(
+                        sessionId, requestId, stationId, operatorId, fecha);
+                break;
+
+            case "WATERING_TELEMETRY":
+                reenviar = db.registrarTelemetria(eventId, sessionId, requestId, stationId, operatorId,entero(e, "sequence"),numero(e, "flowLitresPerMinute"),numero(e, "volumeLitres"), fecha);
+                break;
+
+            case "WATERING_FINISHED":
+                reenviar = db.registrarFin(sessionId, requestId, stationId, operatorId,texto(e, "reason"), entero(e, "durationSeconds"),numero(e, "volumeLitres"), fecha);
+                break;
+
+            default:
+                throw new IllegalArgumentException("Evento no soportado");
+        }
+
+        if (reenviar) {
+            productor.send(new ProducerRecord<>("wm.fo." + operatorId + ".events",sessionId,json.writeValueAsString(e))).get();
+
+            System.out.println("KAFKA: " + tipo + " de " + stationId);
+
+            if ("WATERING_TELEMETRY".equals(tipo)) {
+                System.out.println("Caudal: " + numero(e, "flowLitresPerMinute") + " L/min; volumen: " + numero(e, "volumeLitres") + " L");
+            }
+        }
+    }
+
     @Override
     public void run() {
         try (
@@ -159,7 +241,7 @@ public class KafkaCentral extends Thread {
                     new KafkaProducer<>(propiedadesProductor())
         ) {
             consumidor = cliente;
-            cliente.subscribe(List.of("wm.watering.requests"));
+            cliente.subscribe(List.of("wm.watering.requests","wm.station.results","wm.station.telemetry"));
 
             System.out.println("KAFKA: consumidor de solicitudes iniciado");
 
@@ -168,7 +250,11 @@ public class KafkaCentral extends Thread {
 
                 for (ConsumerRecord<String, String> registro : registros) {
                     try {
-                        procesar(registro.value(), productor);
+                        if ("wm.watering.requests".equals(registro.topic())) {
+                            procesar(registro.value(), productor);
+                        } else {
+                            procesarEvento(registro.topic(), registro.value(), productor);
+                        }
 
                     } catch (JsonProcessingException
                             | IllegalArgumentException e) {
