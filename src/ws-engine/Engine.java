@@ -45,6 +45,7 @@ public class Engine{
     private KafkaConsumer<String, String> consumidor;
     private volatile boolean kafkaEjecutando = true;
     private ObjectNode resultadoPendiente;
+    private final java.util.Set<String> sesionesEjecutadas = new java.util.HashSet<>();
 
 
     public Engine(){
@@ -123,12 +124,13 @@ public class Engine{
                 Thread.sleep(1000);
             }
             catch(InterruptedException e){
+                Thread.currentThread().interrupt();
                 return;
            }
-           simularSegundo();
-           publicarTelemetria();
-           ComprobarTiempo();
-           EnviarResultado();
+           synchronized(this) {
+                simularSegundo();
+                ComprobarTiempo();
+            }
         }
     }
 
@@ -161,6 +163,8 @@ public class Engine{
 
             System.out.println("[ENGINE] Kafka conectado. Esperando ordenes.");
 
+            long ultimaPublicacion = System.nanoTime();
+
             while(kafkaEjecutando && running){
                 var registros = cliente.poll(Duration.ofMillis(500));
 
@@ -173,6 +177,14 @@ public class Engine{
                     }
 
                     cliente.commitSync(Map.of(new TopicPartition(registro.topic(),registro.partition()), new OffsetAndMetadata(registro.offset() + 1)));
+                }
+
+                long ahora = System.nanoTime();
+
+                if (ahora - ultimaPublicacion >= 1_000_000_000L) {
+                    publicarTelemetria();
+                    EnviarResultado();
+                    ultimaPublicacion = ahora;
                 }
             }
         }catch(WakeupException e){
@@ -213,11 +225,16 @@ public class Engine{
             throw new IllegalArgumentException("Campos obligatorios vacios");
         }
 
-        boolean iniciado = IniciarRiegoKafka(sessionId, requestId, operatorId, duracion);
+        synchronized (this){
+            if (!sesionesEjecutadas.contains(sessionId)) {
+                if (!IniciarRiegoKafka(
+                        sessionId, requestId, operatorId, duracion)) {
+                    throw new IOException(
+                            "Engine no disponible para la sesion " + sessionId);
+                }
 
-        if (!iniciado) {
-            System.out.println("[ENGINE] No se pudo iniciar el riego solicitado");
-            return;
+                sesionesEjecutadas.add(sessionId);
+            }
         }
 
         ObjectNode inicio = json.createObjectNode();
@@ -244,7 +261,7 @@ public class Engine{
         }
 
         synchronized(this){
-            if (productor == null || !RiegoKafka || RequestId.isEmpty()) {
+            if (productor == null || !RiegoKafka || RequestId.isEmpty() || SegundosRegados <= 0) {
                 return;
             }
 
@@ -263,7 +280,7 @@ public class Engine{
             muestra.put("volumeLitres", VolumenAcumulado);
         }
         try{
-            productor.send(new ProducerRecord<>("wm.station.telemetry",StationId,json.writeValueAsString(muestra))).get();
+            productorAct.send(new ProducerRecord<>("wm.station.telemetry",StationId,json.writeValueAsString(muestra))).get();
 
             System.out.println("[ENGINE] Telemetria publicada. Volumen: " + String.format("%.2f", VolumenAcumulado) + " L");
 
@@ -386,6 +403,14 @@ public class Engine{
                 }
         }
         PararRiego("MANUAL_STOP");
+        EnviarResultado();
+
+        synchronized (this){
+            if (resultadoPendiente != null){
+                System.err.println(
+                        "[ENGINE] Queda un resultado sin publicar.");
+            }
+        }
     }
 
     public void Iniciar(Socket Monitor, String bootstrapServers){
