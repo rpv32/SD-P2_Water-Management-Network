@@ -263,6 +263,8 @@ public class DataBaseManager {
         }
     }
 
+
+
     // Aplica la prioridad de estados.md. Se llama dentro de las transacciones de los demas metodos.
     private void recalcularEstadoVisible(String stationId) throws SQLException {
         String sql = "SELECT monitor_connected, blocked, engine_health, active_session_id, visible_status "
@@ -509,4 +511,227 @@ public class DataBaseManager {
             throw e;
         }
     }
+
+    private String comprobarSesion(
+        String sessionId, String requestId,
+        String stationId, String operatorId) throws SQLException {
+
+        String sql = "SELECT status FROM watering_sessions "
+                + "WHERE session_id = ? AND request_id = ? "
+                + "AND station_id = ? AND operator_id = ?";
+
+        try (PreparedStatement ps = conexion.prepareStatement(sql)) {
+            ps.setString(1, sessionId);
+            ps.setString(2, requestId);
+            ps.setString(3, stationId);
+            ps.setString(4, operatorId);
+
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    throw new IllegalArgumentException(
+                            "El evento no corresponde con una sesion conocida");
+                }
+                return rs.getString("status");
+            }
+        }
+    }
+
+    private boolean terminada(String estado) {
+        return "FINISHED".equals(estado)
+                || "INTERRUPTED".equals(estado);
+    }
+
+    public synchronized boolean sesionPendiente(String sessionId)
+        throws SQLException {
+
+        return existe(
+            "SELECT 1 FROM watering_sessions "
+            + "WHERE session_id = ? AND status = 'AUTHORIZED'",
+            sessionId);
+    }
+
+    public synchronized boolean registrarInicio(
+        String sessionId, String requestId,
+        String stationId, String operatorId,
+        String fecha) throws SQLException {
+
+        try {
+            comenzar();
+
+            String estado = comprobarSesion(
+                    sessionId, requestId, stationId, operatorId);
+
+            if (terminada(estado)) {
+                confirmar();
+                return false;
+            }
+
+            if (!existe(
+                    "SELECT 1 FROM station_runtime_state "
+                    + "WHERE station_id = ? AND active_session_id = ?",
+                    stationId, sessionId)) {
+                throw new IllegalArgumentException("La sesion no esta reservada");
+            }
+
+            String t = ahora();
+
+            update(
+                    "UPDATE watering_sessions "
+                    + "SET status = 'RUNNING', "
+                    + "started_at = COALESCE(started_at, ?), updated_at = ? "
+                    + "WHERE session_id = ? AND status = 'AUTHORIZED'",
+                    fecha, t, sessionId);
+
+            update(
+                    "UPDATE watering_requests "
+                    + "SET status = 'IN_PROGRESS', updated_at = ? "
+                    + "WHERE request_id = ? AND status = 'AUTHORIZED'",
+                    t, requestId);
+
+            recalcularEstadoVisible(stationId);
+            confirmar();
+            return true;
+
+        } catch (SQLException | IllegalArgumentException e) {
+            deshacer();
+            throw e;
+        }
+    }
+
+    public synchronized boolean registrarTelemetria(
+        String eventId, String sessionId, String requestId,
+        String stationId, String operatorId,
+        int secuencia, double caudal, double volumen,
+        String fecha) throws SQLException {
+
+        if (secuencia <= 0
+                || !Double.isFinite(caudal) || caudal < 0
+                || !Double.isFinite(volumen) || volumen < 0) {
+            throw new IllegalArgumentException("Telemetria no valida");
+        }
+
+        try {
+            comenzar();
+
+            String estado = comprobarSesion(
+                    sessionId, requestId, stationId, operatorId);
+
+            if (terminada(estado)) {
+                confirmar();
+                return false;
+            }
+
+            String t = ahora();
+
+            update(
+                    "INSERT INTO telemetry_samples "
+                    + "(event_id, session_id, request_id, station_id, operator_id, "
+                    + "sequence, flow_litres_per_minute, volume_litres, "
+                    + "occurred_at, created_at) "
+                    + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    + "ON CONFLICT(event_id) DO NOTHING",
+                    eventId, sessionId, requestId, stationId, operatorId,
+                    String.valueOf(secuencia), String.valueOf(caudal),
+                    String.valueOf(volumen), fecha, t);
+
+            update(
+                    "UPDATE station_runtime_state "
+                    + "SET current_flow_lpm = ?, current_volume_litres = ?, "
+                    + "updated_at = ? "
+                    + "WHERE station_id = ? AND active_session_id = ? "
+                    + "AND ? = (SELECT MAX(sequence) FROM telemetry_samples "
+                    + "WHERE session_id = ?)",
+                    String.valueOf(caudal), String.valueOf(volumen),
+                    t, stationId, sessionId,
+                    String.valueOf(secuencia), sessionId);
+
+            confirmar();
+            return true;
+
+        } catch (SQLException | IllegalArgumentException e) {
+            deshacer();
+            throw e;
+        }
+    }
+
+    public synchronized boolean registrarFin(
+        String sessionId, String requestId,
+        String stationId, String operatorId,
+        String motivo, int duracion, double volumen,
+        String fecha) throws SQLException {
+
+        if (duracion < 0
+                || !Double.isFinite(volumen) || volumen < 0
+                || !java.util.Set.of(
+                        "TIME_LIMIT", "MANUAL_STOP", "LEAK", "BLOCKED",
+                        "ENGINE_KO", "ENGINE_TIMEOUT", "CENTRAL_DOWN")
+                        .contains(motivo)) {
+            throw new IllegalArgumentException("Resultado no valido");
+        }
+
+        try {
+            comenzar();
+
+            String estado = comprobarSesion(
+                    sessionId, requestId, stationId, operatorId);
+
+            // Permite reenviar al FO un resultado ya guardado.
+            if (existe(
+                    "SELECT 1 FROM watering_results WHERE session_id = ?",
+                    sessionId)) {
+                confirmar();
+                return true;
+            }
+
+            if (terminada(estado)) {
+                confirmar();
+                return false;
+            }
+
+            String t = ahora();
+            boolean normal = "TIME_LIMIT".equals(motivo)
+                    || "MANUAL_STOP".equals(motivo);
+
+            update(
+                    "INSERT INTO watering_results "
+                    + "(session_id, request_id, station_id, operator_id, reason, "
+                    + "duration_seconds, volume_litres, finished_at, created_at) "
+                    + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    sessionId, requestId, stationId, operatorId, motivo,
+                    String.valueOf(duracion), String.valueOf(volumen), fecha, t);
+
+            update(
+                    "UPDATE watering_sessions SET status = ?, "
+                    + "actual_duration_seconds = ?, finished_at = ?, "
+                    + "finish_reason = ?, final_volume_litres = ?, updated_at = ? "
+                    + "WHERE session_id = ?",
+                    normal ? "FINISHED" : "INTERRUPTED",
+                    String.valueOf(duracion), fecha, motivo,
+                    String.valueOf(volumen), t, sessionId);
+
+            update(
+                    "UPDATE watering_requests "
+                    + "SET status = ?, finished_at = ?, updated_at = ? "
+                    + "WHERE request_id = ?",
+                    normal ? "FINISHED" : "FAILED", fecha, t, requestId);
+
+            update(
+                    "UPDATE station_runtime_state "
+                    + "SET active_session_id = NULL, current_operator_id = NULL, "
+                    + "current_flow_lpm = 0, current_volume_litres = ?, "
+                    + "updated_at = ? "
+                    + "WHERE station_id = ? AND active_session_id = ?",
+                    String.valueOf(volumen), t, stationId, sessionId);
+
+            recalcularEstadoVisible(stationId);
+            confirmar();
+            return true;
+
+        } catch (SQLException | IllegalArgumentException e) {
+            deshacer();
+            throw e;
+        }
+    }
+
+    
 }
