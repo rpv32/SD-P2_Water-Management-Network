@@ -67,12 +67,6 @@
                 </executions>
             </plugin>
         </plugins>
-
-        <resources>
-            <resource>
-            <directory>BBDD</directory>
-            </resource>
-        </resources>
         
     </build>
 

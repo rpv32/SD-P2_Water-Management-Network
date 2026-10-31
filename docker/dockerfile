@@ -19,4 +19,5 @@ ENV DB_PATH=/data/wm.db
 
 EXPOSE 5000 8080
 
+RUN mkdir -p /data
 ENTRYPOINT ["java", "-jar", "app.jar"]

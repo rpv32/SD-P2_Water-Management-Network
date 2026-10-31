@@ -17,7 +17,9 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
 
   central:
-    build: .
+    build:
+      context: ..
+      dockerfile: docker/dockerfile
     container_name: central
     depends_on:
       - broker
@@ -31,36 +33,45 @@ services:
       DB_PATH: "/data/wm.db"
     volumes:
       - central-data:/data
+    entrypoint: ["java", "-cp", "app.jar", "WM_Central", "5000", "broker:29092"]
 
   monitor:
-    build: .
+    build:
+      context: ..
+      dockerfile: docker/dockerfile
     container_name: monitor-ws01
     depends_on:
       - central
-    command: ["WM_WS_M", "6000", "central", "5000", "WS-01"]
+    entrypoint: ["java", "-cp", "app.jar", "WM_WS_M", "6000", "central", "5000", "WS-01"]
     ports:
       - "6000:6000"
 
   engine:
-    build: .
+    build:
+      context: ..
+      dockerfile: docker/dockerfile
     container_name: engine-ws01
     depends_on:
       - monitor
-    command: ["Engine", "monitor-ws01", "6000", "WS-01", "broker:29092"]
+    entrypoint: ["java", "-cp", "app.jar", "Engine", "monitor-ws01", "6000", "WS-01", "broker:29092"]
 
   fo1:
-    build: .
+    build:
+      context: ..
+      dockerfile: docker/dockerfile
     container_name: fo-op01
     depends_on:
       - broker
-    command: ["WM_FO", "broker:29092", "OP-01"]
+    entrypoint: ["java", "-cp", "app.jar", "WM_FO", "broker:29092", "OP-01"]
 
   fo2:
-    build: .
+    build:
+      context: ..
+      dockerfile: docker/dockerfile
     container_name: fo-op02
     depends_on:
       - broker
-    command: ["WM_FO", "broker:29092", "OP-02"]
+    entrypoint: ["java", "-cp", "app.jar", "WM_FO", "broker:29092", "OP-02"]
 
 volumes:
   central-data:
