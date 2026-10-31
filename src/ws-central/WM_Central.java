@@ -62,8 +62,8 @@ public class WM_Central {
 				System.out.println("$ java WM_Central puerto_servidor boostrapServer");
 				return;
 			}
-			puerto = args[0];
-			booststrapServer = args[1];
+			puerto = System.getenv().getOrDefault("CENTRAL_PORT", args.length > 0 ? args[0] : "5000");
+			booststrapServer = System.getenv().getOrDefault("KAFKA_BOOTSTRAP_SERVERS", args.length > 1 ? args[1] : "localhost:9092");
 
 		/*
 		* Se crea el socket servidor y se queda a la espera de conexiones de clientes
@@ -72,10 +72,10 @@ public class WM_Central {
 		{
 
 			ServerSocket skServidor = new ServerSocket(Integer.parseInt(puerto));
-			db = new DataBaseManager("wm.db");
+			String rutaDb = System.getenv().getOrDefault("DB_PATH", "wm.db");
+			db = new DataBaseManager(rutaDb);
             db.marcarTodasDesconectadas();
 			
-
 			KafkaCentral kafka = new KafkaCentral(booststrapServer, db);
 			Runtime.getRuntime().addShutdownHook(new Thread(kafka::detener));
 			kafka.start();

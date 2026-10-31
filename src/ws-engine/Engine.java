@@ -227,10 +227,24 @@ public class Engine{
 
         synchronized (this){
             if (!sesionesEjecutadas.contains(sessionId)) {
-                if (!IniciarRiegoKafka(
-                        sessionId, requestId, operatorId, duracion)) {
-                    throw new IOException(
-                            "Engine no disponible para la sesion " + sessionId);
+                if (!IniciarRiegoKafka(sessionId, requestId, operatorId, duracion)) {
+                    ObjectNode rechazo = json.createObjectNode();
+
+                    rechazo.put("schemaVersion", 1);
+                    rechazo.put("eventId", UUID.randomUUID().toString());
+                    rechazo.put("eventType", "WATERING_FINISHED");
+                    rechazo.put("occurredAt", Instant.now().toString());
+                    rechazo.put("requestId", requestId);
+                    rechazo.put("sessionId", sessionId);
+                    rechazo.put("stationId", StationId);
+                    rechazo.put("operatorId", operatorId);
+                    rechazo.put("reason", "ENGINE_KO");
+                    rechazo.put("durationSeconds", 0);
+                    rechazo.put("volumeLitres", 0.0);
+
+                    productorKafka.send(new ProducerRecord<>("wm.station.results", StationId, json.writeValueAsString(rechazo))).get();
+                    System.out.println("[ENGINE] Inicio rechazado: ENGINE_KO");
+                    return;
                 }
 
                 sesionesEjecutadas.add(sessionId);

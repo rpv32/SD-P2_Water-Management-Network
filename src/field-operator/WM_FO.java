@@ -34,6 +34,11 @@ public class WM_FO {
     private final KafkaProducer<String, String> productor;
     private final KafkaConsumer<String, String> consumidor;
 
+    private static final java.nio.file.Path CARPETA_ARCHIVOS = java.nio.file.Path.of("archivos_fo");
+
+    private final java.util.Map<String, String> solicitudesPendientes = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private final java.util.Map<String, Instant> tiemposPendientes = new java.util.concurrent.ConcurrentHashMap<>();
     /*
      * El hilo principal espera esta señal antes de mostrar el menu.
      * Empieza en 1 y pasa a 0 cuando el receptor esta preparado o falla.
@@ -114,6 +119,12 @@ public class WM_FO {
 
                 // Procesamos todos los mensajes recibidos en esta lectura.
                 for (ConsumerRecord<String, String> registro : registros) {
+                    JsonNode evento = json.readTree(registro.value());
+                    String requestId = evento.path("requestId").asText();
+                    if(!requestId.isEmpty()) {
+                        solicitudesPendientes.remove(requestId);
+                        tiemposPendientes.remove(requestId);
+                    }
                     mostrarEvento(registro.value());
                 }
 
@@ -225,10 +236,14 @@ public class WM_FO {
          * incluso si no conseguimos confirmar su publicacion.
          */
         System.out.println("requestId: " + requestId);
+        
+        solicitudesPendientes.put(requestId, json.writeValueAsString(solicitud));
+        tiemposPendientes.put(requestId, Instant.now());
 
         // get espera a que el envio termine correctamente o produzca un error.
         productor.send(registro).get();
-
+        
+        System.out.println("Esperando respuesta de Central durante 4 segundos...");
         System.out.println("Solicitud publicada en Kafka.");
         System.out.println("Pendiente de respuesta de Central.");
     }
@@ -279,6 +294,7 @@ public class WM_FO {
     public void ejecutar() throws Exception {
         hiloReceptor = new Thread(this::recibirEventos, "fo-eventos");
         hiloReceptor.start();
+        iniciarArchivoPendientes();
 
         try {
             System.out.println("Conectando con Kafka...");
@@ -318,6 +334,52 @@ public class WM_FO {
         } finally {
             productor.close(Duration.ofSeconds(5));
         }
+    }
+    
+    private void archivarSolicitud(String requestId, String contenido) {
+        try {
+            java.nio.file.Files.createDirectories(CARPETA_ARCHIVOS);
+
+            java.nio.file.Files.writeString(
+                    CARPETA_ARCHIVOS.resolve(requestId + ".json"),
+                    contenido);
+
+            System.out.println("Solicitud archivada por falta de respuesta: "
+                    + requestId);
+        } catch (Exception e) {
+            System.err.println("No se pudo archivar la solicitud: "
+                    + e.getMessage());
+        }
+    }
+
+    private void iniciarArchivoPendientes() {
+        Thread hilo = new Thread(() -> {
+            while (ejecutando) {
+                try {
+                    Thread.sleep(500);
+                } catch (InterruptedException e) {
+                    return;
+                }
+
+                Instant limite = Instant.now().minusSeconds(4);
+
+                for (var entrada : tiemposPendientes.entrySet()) {
+                    if (entrada.getValue().isBefore(limite)) {
+                        String requestId = entrada.getKey();
+
+                        String contenido = solicitudesPendientes.remove(requestId);
+                        tiemposPendientes.remove(requestId);
+
+                        if (contenido != null) {
+                            archivarSolicitud(requestId, contenido);
+                        }
+                    }
+                }
+            }
+        }, "fo-archivo-pendientes");
+
+        hilo.setDaemon(true);
+        hilo.start();
     }
 
     public static void main(String[] args) {
