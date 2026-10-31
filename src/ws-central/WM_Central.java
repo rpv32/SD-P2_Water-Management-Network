@@ -1,6 +1,11 @@
 import java.net.*;
 import java.util.HashSet;
+import java.util.Scanner;
 import java.util.Set;
+import com.sun.net.httpserver.HttpServer;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.Scanner;
 
 public class WM_Central {
 
@@ -41,6 +46,141 @@ public class WM_Central {
 		System.out.println("----------------------------------------");
 	}
 
+	private static void menuCentral(){
+		Scanner teclado = new Scanner(System.in);
+
+		while(true){
+			System.out.println(
+				"""
+				----CENTRAL----
+				1.Listar Estaciones
+				2.Bloquear Estaciones
+				3.Activar Estacion
+				4.Salir
+				"""
+			);
+
+			if(!teclado.hasNextLine()){
+				return;
+			}
+
+			String opcion = teclado.nextLine().trim();
+
+			switch(opcion){
+				case "1" -> db.listarEstaciones();
+				case "2" -> {
+					System.out.print("ID de la estacion: ");
+                	db.bloquearEstacion(teclado.nextLine().trim());
+				}
+
+				case "3" -> {
+					System.out.print("ID de la estacion: ");
+                	db.activarEstacion(teclado.nextLine().trim());
+				}
+
+				case "0" -> {
+                System.out.println("Cerrando Central...");
+                System.exit(0);
+				}
+
+				default -> System.out.println("Opcion no valida, eliga una opcion valida");
+			}
+
+
+		}
+
+	}
+
+	private static void iniciarWeb(int puertoWeb) {
+		try {
+			HttpServer servidor = HttpServer.create(new InetSocketAddress(puertoWeb), 0);
+
+			servidor.createContext("/", intercambio -> {
+				byte[] cuerpo;
+
+				if ("/api/stations".equals(intercambio.getRequestURI().getPath())) {
+					cuerpo = db.listarEstacionesJson().getBytes(StandardCharsets.UTF_8);
+
+					intercambio.getResponseHeaders().add(
+							"Content-Type", "application/json; charset=utf-8");
+				} else {
+					cuerpo = html().getBytes(StandardCharsets.UTF_8);
+
+					intercambio.getResponseHeaders().add(
+							"Content-Type", "text/html; charset=utf-8");
+				}
+
+				intercambio.sendResponseHeaders(200, cuerpo.length);
+
+				try (OutputStream salida = intercambio.getResponseBody()) {
+					salida.write(cuerpo);
+				}
+			});
+
+			servidor.start();
+			System.out.println("Web de estado disponible en el puerto " + puertoWeb);
+
+		} catch (Exception e) {
+			System.out.println("No se pudo iniciar la web: " + e.getMessage());
+		}
+	}
+
+	private static String html() {
+		return """
+			<!doctype html>
+			<html lang="es">
+			<head>
+			<meta charset="utf-8">
+			<meta name="viewport" content="width=device-width, initial-scale=1">
+			<title>Water Management Network</title>
+			<style>
+				body { font-family: Arial, sans-serif; margin: 0; background: #f3f6f8; color: #17272f; }
+				header { background: #0f4c5c; color: white; padding: 24px; }
+				main { padding: 24px; }
+				.tarjeta { background: white; border-radius: 10px; padding: 16px; margin-bottom: 12px; box-shadow: 0 2px 6px rgba(0,0,0,.08); }
+				.estado { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: bold; }
+				.AVAILABLE { background: #d1f2df; color: #12653a; }
+				.WATERING { background: #d6e9ff; color: #114d7a; }
+				.LEAK { background: #ffe0e0; color: #8a1c1c; }
+				.DISCONNECTED { background: #e8e8e8; color: #555; }
+				.OUTOFSERVICE { background: #fff2cc; color: #7a5b00; }
+			</style>
+			</head>
+			<body>
+			<header>
+				<h1>Water Management Network</h1>
+				<p>Estado de las estaciones</p>
+			</header>
+			<main>
+				<div id="estaciones">Cargando...</div>
+			</main>
+			<script>
+				async function cargar() {
+				const respuesta = await fetch('/api/stations');
+				const estaciones = await respuesta.json();
+				const contenedor = document.getElementById('estaciones');
+
+				contenedor.innerHTML = estaciones.length === 0
+					? '<div class="tarjeta">No hay estaciones registradas.</div>'
+					: estaciones.map(e => `
+					<div class="tarjeta">
+						<h2>${e.stationId}</h2>
+						<p>${e.location}</p>
+						<span class="estado ${e.status}">${e.status}</span>
+						<p>Engine: ${e.engineHealth} | Monitor: ${e.monitorConnected ? 'conectado' : 'desconectado'}</p>
+						<p>Caudal: ${e.flow} L/min | Volumen: ${e.volume} L</p>
+					</div>
+					`).join('');
+				}
+
+				cargar();
+				setInterval(cargar, 3000);
+			</script>
+			</body>
+			</html>
+			""";
+	}
+
 	/**
 	 * @param args
 	 */
@@ -79,12 +219,19 @@ public class WM_Central {
 			KafkaCentral kafka = new KafkaCentral(booststrapServer, db);
 			Runtime.getRuntime().addShutdownHook(new Thread(kafka::detener));
 			kafka.start();
+
+			int puertoWeb = Integer.parseInt(System.getenv().getOrDefault("WEB_PORT", "8080"));
+			iniciarWeb(puertoWeb);
 			
 			System.out.println("WM_Central iniciado.");
 		    System.out.println("Escuchando el puerto " + puerto);
 			System.out.println("BoostrapServer Kafka: " + booststrapServer);
 			
 			System.out.println("Esperando conexiones de estaciones de riego...");
+
+			Thread hiloMenu = new Thread(() -> WM_Central.menuCentral(), "central-menu");
+			hiloMenu.setDaemon(true);
+			hiloMenu.start();
 
 			/*
 			* Mantenemos la comunicacion con el cliente

@@ -733,5 +733,44 @@ public class DataBaseManager {
         }
     }
 
+    public synchronized String listarEstacionesJson() {
+        StringBuilder json = new StringBuilder("[");
+
+        String sql = """
+            SELECT s.station_id, s.location_name, r.visible_status,
+                r.monitor_connected, r.engine_health,
+                r.current_flow_lpm, r.current_volume_litres
+            FROM stations s
+            JOIN station_runtime_state r ON r.station_id = s.station_id
+            ORDER BY s.station_id
+            """;
+
+        try (PreparedStatement ps = conexion.prepareStatement(sql);
+            ResultSet rs = ps.executeQuery()) {
+
+            boolean primero = true;
+
+            while (rs.next()) {
+                if (!primero) {
+                    json.append(",");
+                }
+                primero = false;
+
+                json.append("{")
+                    .append("\"stationId\":\"").append(rs.getString("station_id")).append("\",")
+                    .append("\"location\":\"").append(rs.getString("location_name")).append("\",")
+                    .append("\"status\":\"").append(rs.getString("visible_status")).append("\",")
+                    .append("\"monitorConnected\":").append(rs.getInt("monitor_connected")).append(",")
+                    .append("\"engineHealth\":\"").append(rs.getString("engine_health")).append("\",")
+                    .append("\"flow\":").append(rs.getDouble("current_flow_lpm")).append(",")
+                    .append("\"volume\":").append(rs.getDouble("current_volume_litres"))
+                    .append("}");
+            }
+        } catch (SQLException e) {
+            System.out.println("Error BD listarEstacionesJson: " + e.getMessage());
+        }
+
+        return json.append("]").toString();
+    }
     
 }
