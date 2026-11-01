@@ -57,7 +57,8 @@ public class WM_Central {
 				1.Listar Estaciones
 				2.Bloquear Estaciones
 				3.Activar Estacion
-				4.Salir
+				4.Iniciar Riego
+				0.Salir
 				"""
 			);
 
@@ -77,6 +78,24 @@ public class WM_Central {
 				case "3" -> {
 					System.out.print("ID de estacion o * para todas: ");
     				cambiarEstadoDesdeMenu(teclado.nextLine().trim(), false);
+				}
+
+				case "4" -> {
+					try{
+						System.out.print("ID de estacion o * para todas: ");
+        				String objetivo = teclado.nextLine().trim();
+						System.out.print("ID de operario registrado: ");
+        				String operador = teclado.nextLine().trim();
+						System.out.print("Duracion en segundos: ");
+        				int duracion = Integer.parseInt(teclado.nextLine().trim());
+						
+						for (String id : estacionesObjetivo(objetivo)) {
+            				kafka.solicitarRiego(id, operador, duracion);
+        				}
+						
+					}catch(Exception e){
+						System.err.println("No se pudo solicitar el riego: "+e.getMessage());
+					}
 				}
 
 				case "0" -> {
