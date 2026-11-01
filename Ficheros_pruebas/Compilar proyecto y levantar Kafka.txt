@@ -26,3 +26,16 @@ foreach ($t in $topics) {
 
 docker exec broker /opt/kafka/bin/kafka-topics.sh --bootstrap-server broker:29092 --list
 
+
+
+Ejecutar Central, Engine, Monitor, Operarios:
+
+java "-Dorg.slf4j.simpleLogger.defaultLogLevel=warn" -cp ".\target\classes;.\target\dependency\*" WM_Central 5000 localhost:9092
+
+java "-Dorg.slf4j.simpleLogger.defaultLogLevel=warn" -cp ".\target\classes;.\target\dependency\*" WM_WS_M 6000 localhost 5000 WS-01
+
+java "-Dorg.slf4j.simpleLogger.defaultLogLevel=warn" -cp ".\target\classes;.\target\dependency\*" Engine localhost 6000 WS-01 localhost:9092
+
+java "-Dorg.slf4j.simpleLogger.defaultLogLevel=warn" -cp ".\target\classes;.\target\dependency\*" WM_FO localhost:9092 OP-01
+
+java "-Dorg.slf4j.simpleLogger.defaultLogLevel=warn" -cp ".\target\classes;.\target\dependency\*" WM_FO localhost:9092 OP-02
