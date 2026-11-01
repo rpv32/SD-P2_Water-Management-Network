@@ -143,7 +143,7 @@ public class WM_Central {
 				.WATERING { background: #d6e9ff; color: #114d7a; }
 				.LEAK { background: #ffe0e0; color: #8a1c1c; }
 				.DISCONNECTED { background: #e8e8e8; color: #555; }
-				.OUTOFSERVICE { background: #fff2cc; color: #7a5b00; }
+				.OUT_OF_SERVICE { background: #fff2cc; color: #7a5b00; }
 			</style>
 			</head>
 			<body>
