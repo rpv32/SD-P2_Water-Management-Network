@@ -53,6 +53,7 @@ public class WM_FO {
     private volatile String errorReceptor;
 
     private Thread hiloReceptor;
+    private final java.util.Map<String,java.util.concurrent.CompletableFuture<String>> finalesServicio = new java.util.concurrent.ConcurrentHashMap<>();
 
     public WM_FO(String bootstrapServers, String operatorId) {
         this.operatorId = operatorId;
@@ -100,6 +101,23 @@ public class WM_FO {
         consumidor = new KafkaConsumer<>(c);
     }
 
+    private void consultarEstaciones() throws Exception {
+        String requestId = UUID.randomUUID().toString();
+
+        ObjectNode consulta = json.createObjectNode();
+
+        consulta.put("schemaVersion", 1);
+        consulta.put("eventId", UUID.randomUUID().toString());
+        consulta.put("eventType", "STATIONS_QUERY");
+        consulta.put("occurredAt", Instant.now().toString());
+        consulta.put("requestId", requestId);
+        consulta.put("operatorId", operatorId);
+
+        productor.send(new ProducerRecord<>("wm.fo.queries",operatorId,json.writeValueAsString(consulta))).get();
+
+        System.out.println("Consulta enviada. Esperando estaciones disponibles...");
+    }
+
     /*
      * Este metodo se ejecuta en un hilo independiente.
      * Asi podemos recibir eventos mientras el usuario utiliza el menu.
@@ -126,6 +144,16 @@ public class WM_FO {
                         tiemposPendientes.remove(requestId);
                     }
                     mostrarEvento(registro.value());
+                    String tipo = evento.path("eventType").asText();
+
+                    if ("WATERING_DENIED".equals(tipo) || "WATERING_FINISHED".equals(tipo)) {
+
+                        var fin = finalesServicio.get(requestId);
+
+                        if (fin != null) {
+                            fin.complete(tipo);
+                        }
+                    }
                 }
 
                 // Guardamos la posicion despues de procesar todo el lote.
@@ -214,6 +242,7 @@ public class WM_FO {
             return;
         }
 
+        publicarSolicitud(UUID.randomUUID().toString(),stationId,duracion);
         // requestId identifica la solicitud durante todo su recorrido.
         String requestId = UUID.randomUUID().toString();
 
@@ -256,6 +285,8 @@ public class WM_FO {
             System.out.println();
             System.out.println("=== WM_FO " + operatorId + " ===");
             System.out.println("1. Solicitar riego");
+            System.out.println("2. Consultar estaciones disponibles");
+            System.out.println("3. Ejecutar servicios desde fichero");
             System.out.println("0. Salir");
             System.out.print("> ");
 
@@ -281,6 +312,24 @@ public class WM_FO {
                     }
                     break;
 
+                case "2":
+                    try {
+                        consultarEstaciones();
+                    } catch (Exception e) {
+                        System.err.println("No se pudo enviar la consulta: " + e.getMessage());
+                    }
+                    break;
+                case "3":
+                    System.out.print("Ruta del fichero: ");
+
+                    try {
+                        ejecutarServiciosDesdeFichero(teclado.nextLine().trim());
+
+                    } catch (Exception e) {
+                        System.err.println("Fichero detenido: " + e.getMessage());
+                        System.err.println("Si se envio una solicitud, puede seguir pendiente. No se envia el siguiente servicio automaticamente.");
+                    }
+                    break;
                 case "0":
                     return;
 
@@ -380,6 +429,112 @@ public class WM_FO {
 
         hilo.setDaemon(true);
         hilo.start();
+    }
+
+    private void ejecutarServiciosDesdeFichero(String ruta) throws Exception {
+        var lineas = java.nio.file.Files.readAllLines(java.nio.file.Path.of(ruta),java.nio.charset.StandardCharsets.UTF_8);
+
+        var estaciones = new java.util.ArrayList<String>();
+        var duraciones = new java.util.ArrayList<Integer>();
+
+        for (int i = 0; i < lineas.size(); i++) {
+            String linea = lineas.get(i).trim();
+
+            if (linea.isEmpty() || linea.startsWith("#")) {
+                continue;
+            }
+
+            String[] campos = linea.split(";", -1);
+
+            if (campos.length != 2 || campos[0].isBlank()) {
+                throw new IllegalArgumentException("Formato incorrecto en linea " + (i + 1));
+            }
+
+            int duracion;
+
+            try {
+                duracion = Integer.parseInt(campos[1].trim());
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException("Duracion incorrecta en linea " + (i + 1));
+            }
+
+            if (duracion <= 0) {
+                throw new IllegalArgumentException("Duracion no positiva en linea " + (i + 1));
+            }
+
+            estaciones.add(campos[0].trim());
+            duraciones.add(duracion);
+        }
+
+        for (int i = 0; i < estaciones.size() && ejecutando; i++) {
+            String requestId = UUID.randomUUID().toString();
+
+            var fin =new java.util.concurrent.CompletableFuture<String>();
+
+            finalesServicio.put(requestId, fin);
+
+            try {
+                publicarSolicitud(requestId,estaciones.get(i),duraciones.get(i));
+
+                boolean terminado = false;
+
+                while (ejecutando && !terminado) {
+                    try {
+                        String resultado = fin.get(1, java.util.concurrent.TimeUnit.SECONDS);
+
+                        System.out.println("Servicio del fichero terminado: " + resultado);
+
+                        terminado = true;
+
+                    } catch (java.util.concurrent.TimeoutException e) {
+                    }
+                }
+
+                if (!terminado) {
+                    throw new IllegalStateException("Receptor detenido; se interrumpe el fichero");
+                }
+
+            } finally {
+                finalesServicio.remove(requestId);
+            }
+
+            if (i + 1 < estaciones.size() && ejecutando) {
+                System.out.println("Esperando 4 segundos para el siguiente servicio...");
+
+                Thread.sleep(4000);
+            }
+        }
+
+        System.out.println("Ejecucion del fichero terminada.");
+    }
+
+    private void publicarSolicitud(String requestId,String stationId,int duracion) throws Exception {
+
+        if (stationId.isBlank() || duracion <= 0) {
+            throw new IllegalArgumentException("Estacion o duracion no valida");
+        }
+
+        ObjectNode solicitud = json.createObjectNode();
+
+        solicitud.put("schemaVersion", 1);
+        solicitud.put("eventId", UUID.randomUUID().toString());
+        solicitud.put("eventType", "WATERING_REQUESTED");
+        solicitud.put("occurredAt", Instant.now().toString());
+        solicitud.put("requestId", requestId);
+        solicitud.put("stationId", stationId);
+        solicitud.put("operatorId", operatorId);
+        solicitud.put("durationSeconds", duracion);
+
+        String contenido = json.writeValueAsString(solicitud);
+
+        solicitudesPendientes.put(requestId, contenido);
+        tiemposPendientes.put(requestId, Instant.now());
+
+        System.out.println("requestId: " + requestId);
+
+        productor.send(new ProducerRecord<>(TOPIC_SOLICITUDES,stationId,contenido)).get();
+
+        System.out.println("Solicitud publicada. Pendiente de respuesta de Central.");
     }
 
     public static void main(String[] args) {

@@ -303,6 +303,56 @@ public class KafkaCentral extends Thread {
         System.out.println("Solicitud publicada para " + stationId);
     }
 
+    private void procesarConsulta(
+        String contenido,
+        KafkaProducer<String, String> productor) throws Exception {
+
+        JsonNode consulta = json.readTree(contenido);
+
+        if (consulta == null || !consulta.isObject()|| entero(consulta, "schemaVersion") != 1|| !"STATIONS_QUERY".equals(texto(consulta, "eventType"))) {
+            throw new IllegalArgumentException("Consulta no valida");
+        }
+
+        String operatorId = texto(consulta, "operatorId");
+        String requestId = texto(consulta, "requestId");
+
+        UUID.fromString(texto(consulta, "eventId"));
+        UUID.fromString(requestId);
+        Instant.parse(texto(consulta, "occurredAt"));
+
+        if (!operatorId.matches("[A-Za-z0-9_-]+")) {
+            throw new IllegalArgumentException("Operario no valido");
+        }
+
+        ObjectNode respuesta = json.createObjectNode();
+
+        respuesta.put("schemaVersion", 1);
+        respuesta.put("eventId", UUID.randomUUID().toString());
+        respuesta.put("occurredAt", Instant.now().toString());
+        respuesta.put("requestId", requestId);
+        respuesta.put("operatorId", operatorId);
+
+        if (!db.existeOperador(operatorId)) {
+            respuesta.put("eventType", "QUERY_DENIED");
+            respuesta.put("errorCode", "UNKNOWN_OPERATOR");
+            respuesta.put("message", "El operario no existe o esta inactivo");
+
+        } else {
+            respuesta.put("eventType", "STATIONS_RESULT");
+
+            var disponibles = respuesta.putArray("stations");
+            JsonNode estaciones = json.readTree(db.listarEstacionesJson());
+
+            for (JsonNode estacion : estaciones) {
+                if ("AVAILABLE".equals(estacion.path("status").asText())) {
+                    disponibles.add(estacion);
+                }
+            }
+        }
+
+        productor.send(new ProducerRecord<>("wm.fo." + operatorId + ".events",requestId,json.writeValueAsString(respuesta))).get();
+    }
+
     @Override
     public void run() {
         try (
@@ -313,7 +363,7 @@ public class KafkaCentral extends Thread {
         ) {
             consumidor = cliente;
             productorActivo = productor;
-            cliente.subscribe(List.of("wm.watering.requests","wm.station.results","wm.station.telemetry"));
+            cliente.subscribe(List.of("wm.watering.requests","wm.station.results","wm.station.telemetry","Wm.fo.queries"));
 
             System.out.println("KAFKA: consumidor de solicitudes iniciado");
 
@@ -324,6 +374,9 @@ public class KafkaCentral extends Thread {
                     try {
                         if ("wm.watering.requests".equals(registro.topic())) {
                             procesar(registro.value(), productor);
+                        }
+                        else if("wm.fo.queries".equals(registro.topic())){
+                            procesarConsulta(registro.value(), productor);
                         } else {
                             procesarEvento(registro.topic(), registro.value(), productor);
                         }

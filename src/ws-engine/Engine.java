@@ -525,7 +525,7 @@ public class Engine{
     }
 
     public void Iniciar(Socket Monitor, String bootstrapServers){
-        new Thread(() -> HiloMonitor(Monitor)).start();
+        new Thread(() -> mantenerConexionMonitor(Monitor),"engine-monitor").start();
         new Thread(() -> HiloSimulacion()).start();
         new Thread(() -> HiloKafka(bootstrapServers)).start();
         Menu();
