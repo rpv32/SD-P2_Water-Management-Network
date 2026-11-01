@@ -142,6 +142,13 @@ public class WM_FO {
                     if(!requestId.isEmpty()) {
                         solicitudesPendientes.remove(requestId);
                         tiemposPendientes.remove(requestId);
+
+                        try {
+                            java.nio.file.Files.deleteIfExists(CARPETA_ARCHIVOS.resolve(requestId + ".json"));
+
+                        } catch (java.io.IOException e) {
+                            System.err.println("No se pudo retirar el archivo de la solicitud: "+ e.getMessage());
+                        }
                     }
                     mostrarEvento(registro.value());
                     String tipo = evento.path("eventType").asText();

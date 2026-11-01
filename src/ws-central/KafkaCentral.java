@@ -146,7 +146,7 @@ public class KafkaCentral extends Thread {
                 topic, requestId,
                 json.writeValueAsString(respuesta))).get();
         
-        if (decision.autorizada()) {
+        if (decision.autorizada()&& db.sesionPendiente(decision.sessionId())) {
             ObjectNode orden = json.createObjectNode();
 
             orden.put("schemaVersion", 1);
