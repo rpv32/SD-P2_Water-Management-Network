@@ -13,6 +13,7 @@ public class WM_Central {
 	//Luego cuando se cree SQLite se guardaran en la base de datos.
 	private static Set<String> estacionesConectadas = new HashSet<String>();
 	private static DataBaseManager db;
+	private static KafkaCentral kafka;
 
 	//Registra una estación como conectada, si ya estaba conectada devuelve false, si no devuelve true
 	public static synchronized boolean registrarConexion(String stationId){
@@ -217,7 +218,7 @@ public class WM_Central {
 			db = new DataBaseManager(rutaDb);
             db.marcarTodasDesconectadas();
 			
-			KafkaCentral kafka = new KafkaCentral(booststrapServer, db);
+			kafka = new KafkaCentral(booststrapServer, db);
 			Runtime.getRuntime().addShutdownHook(new Thread(kafka::detener));
 			kafka.start();
 

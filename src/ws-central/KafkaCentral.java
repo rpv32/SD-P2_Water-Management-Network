@@ -25,6 +25,7 @@ public class KafkaCentral extends Thread {
     private final String bootstrapServers;
     private final DataBaseManager db;
     private final ObjectMapper json = new ObjectMapper();
+    private volatile KafkaProducer<String, String> productorActivo;
 
     private volatile boolean ejecutando = true;
     private volatile KafkaConsumer<String, String> consumidor;
@@ -254,6 +255,26 @@ public class KafkaCentral extends Thread {
         }
     }
 
+    public void enviarOrden(String stationId, String tipo) throws Exception {
+        KafkaProducer<String, String> p = productorActivo;
+
+        if (p == null) {
+            throw new IllegalStateException("El servicio Kafka de Central no esta preparado");
+        }
+
+        ObjectNode orden = json.createObjectNode();
+
+        orden.put("schemaVersion", 1);
+        orden.put("eventId", UUID.randomUUID().toString());
+        orden.put("eventType", tipo);
+        orden.put("occurredAt", Instant.now().toString());
+        orden.put("stationId", stationId);
+
+        p.send(new ProducerRecord<>("wm.station.commands",stationId,json.writeValueAsString(orden))).get();
+
+        System.out.println("KAFKA: " + tipo + " enviado a " + stationId);
+    }
+
     @Override
     public void run() {
         try (
@@ -263,6 +284,7 @@ public class KafkaCentral extends Thread {
                     new KafkaProducer<>(propiedadesProductor())
         ) {
             consumidor = cliente;
+            productorActivo = productor;
             cliente.subscribe(List.of("wm.watering.requests","wm.station.results","wm.station.telemetry"));
 
             System.out.println("KAFKA: consumidor de solicitudes iniciado");
@@ -308,6 +330,7 @@ public class KafkaCentral extends Thread {
         } finally {
             ejecutando = false;
             consumidor = null;
+            productorActivo = null;
         }
     }
 

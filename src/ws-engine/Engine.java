@@ -212,8 +212,29 @@ public class Engine{
             return;
         }
 
-        if(!"START_WATERING".equals(orden.path("eventType").asText())){
-            throw new IllegalArgumentException("Tipo de orden no soportado");
+        String tipo = orden.path("eventType").asText();
+
+        switch (tipo) {
+            case "BLOCK_STATION":
+                bloquear();
+                EnviarResultado();
+                return;
+
+            case "ACTIVATE_STATION":
+                activar();
+                return;
+
+            case "STOP_WATERING":
+                PararRiego("MANUAL_STOP");
+                EnviarResultado();
+                return;
+
+            case "START_WATERING":
+                break;
+
+            default:
+                throw new IllegalArgumentException(
+                        "Tipo de orden no soportado: " + tipo);
         }
 
         String sessionId = orden.path("sessionId").asText();
