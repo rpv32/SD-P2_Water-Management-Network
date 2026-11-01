@@ -156,7 +156,7 @@ public class WM_Central {
 			</main>
 			<script>
 				async function cargar() {
-				const respuesta = await fetch('/api/stations');
+				const respuesta = await fetch('/api/stations',{ cache: 'no-store' } );
 				const estaciones = await respuesta.json();
 				const contenedor = document.getElementById('estaciones');
 
@@ -174,7 +174,7 @@ public class WM_Central {
 				}
 
 				cargar();
-				setInterval(cargar, 3000);
+				setInterval(cargar, 1000);
 			</script>
 			</body>
 			</html>
