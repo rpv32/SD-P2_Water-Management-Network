@@ -739,7 +739,7 @@ public class DataBaseManager {
         String sql = """
             SELECT s.station_id, s.location_name, r.visible_status,
                 r.monitor_connected, r.engine_health,
-                r.current_flow_lpm, r.current_volume_litres
+                r.current_flow_lpm, r.current_volume_litres, r.current_operator_id
             FROM stations s
             JOIN station_runtime_state r ON r.station_id = s.station_id
             ORDER BY s.station_id
@@ -762,6 +762,9 @@ public class DataBaseManager {
                     .append("\"status\":\"").append(rs.getString("visible_status")).append("\",")
                     .append("\"monitorConnected\":").append(rs.getInt("monitor_connected")).append(",")
                     .append("\"engineHealth\":\"").append(rs.getString("engine_health")).append("\",")
+                    .append("\"operatorId\":\"")
+                    .append(rs.getString("current_operator_id") == null ? "" : rs.getString("current_operator_id"))
+                    .append("\",")
                     .append("\"flow\":").append(rs.getDouble("current_flow_lpm")).append(",")
                     .append("\"volume\":").append(rs.getDouble("current_volume_litres"))
                     .append("}");

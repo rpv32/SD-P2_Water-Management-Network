@@ -168,7 +168,8 @@ public class WM_Central {
 						<p>${e.location}</p>
 						<span class="estado ${e.status}">${e.status}</span>
 						<p>Engine: ${e.engineHealth} | Monitor: ${e.monitorConnected ? 'conectado' : 'desconectado'}</p>
-						<p>Caudal: ${e.flow} L/min | Volumen: ${e.volume} L</p>
+						<p>Operario: ${e.operatorId || '—'}</p>
+						<p>Caudal: ${Number(e.flow).toFixed(2)} L/min | Volumen: ${Number(e.volume).toFixed(2)} L</p>
 					</div>
 					`).join('');
 				}
