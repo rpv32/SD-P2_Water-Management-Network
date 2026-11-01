@@ -117,7 +117,7 @@ public class WM_WS_M {
 				}
 				System.out.println("INCIDENCIA en " + stationId + ": " + causa);
 			}
-			else if(Actual.equals("OK") && !UltimoNotificado.equals("KO")){
+			else if(Actual.equals("OK") && !UltimoNotificado.equals("OK")){
 				String trama = "RECOVERY#" + UUID.randomUUID() + "#" + stationId + "#" + Instant.now();
    				try{
 					escribeSocket(Central, trama);
