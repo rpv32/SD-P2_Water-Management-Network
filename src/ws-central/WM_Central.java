@@ -70,13 +70,13 @@ public class WM_Central {
 			switch(opcion){
 				case "1" -> db.listarEstaciones();
 				case "2" -> {
-					System.out.print("ID de la estacion: ");
-                	db.bloquearEstacion(teclado.nextLine().trim());
+					System.out.print("ID de estacion o * para todas: ");
+    				cambiarEstadoDesdeMenu(teclado.nextLine().trim(), true);
 				}
 
 				case "3" -> {
-					System.out.print("ID de la estacion: ");
-                	db.activarEstacion(teclado.nextLine().trim());
+					System.out.print("ID de estacion o * para todas: ");
+    				cambiarEstadoDesdeMenu(teclado.nextLine().trim(), false);
 				}
 
 				case "0" -> {
@@ -181,6 +181,51 @@ public class WM_Central {
 			</body>
 			</html>
 			""";
+	}
+
+	private static java.util.List<String> estacionesObjetivo(String objetivo) throws Exception {
+
+		if (!"*".equals(objetivo)) {
+			if (!db.existeEstacion(objetivo)) {
+				throw new IllegalArgumentException("La estacion no existe: " + objetivo);
+			}
+			return java.util.List.of(objetivo);
+		}
+
+		var estaciones = new com.fasterxml.jackson.databind.ObjectMapper().readTree(db.listarEstacionesJson());
+
+		java.util.List<String> ids = new java.util.ArrayList<>();
+
+		for (var estacion : estaciones) {
+			String id = estacion.path("stationId").asText();
+
+			if (db.existeEstacion(id)) {
+				ids.add(id);
+			}
+		}
+		return ids;
+	}
+	
+	private static void cambiarEstadoDesdeMenu(String objetivo, boolean bloquear) {
+
+		try {
+			for (String id : estacionesObjetivo(objetivo)) {
+				try {
+					kafka.enviarOrden(id,bloquear? "BLOCK_STATION": "ACTIVATE_STATION");
+
+					if (bloquear) {
+						db.bloquearEstacion(id);
+					} else {
+						db.activarEstacion(id);
+					}
+
+				} catch (Exception e) {
+					System.err.println("No se pudo cambiar " + id + ": "+ e.getMessage());
+				}
+			}
+		} catch (Exception e) {
+			System.err.println(e.getMessage());
+		}
 	}
 
 	/**
