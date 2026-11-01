@@ -639,7 +639,7 @@ public class DataBaseManager {
                     + "SET current_flow_lpm = ?, current_volume_litres = ?, "
                     + "updated_at = ? "
                     + "WHERE station_id = ? AND active_session_id = ? "
-                    + "AND ? = (SELECT MAX(sequence) FROM telemetry_samples "
+                    + "AND CAST(? AS INTEGER) = (SELECT MAX(sequence) FROM telemetry_samples "
                     + "WHERE session_id = ?)",
                     String.valueOf(caudal), String.valueOf(volumen),
                     t, stationId, sessionId,
