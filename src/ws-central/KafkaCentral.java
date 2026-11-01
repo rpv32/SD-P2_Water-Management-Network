@@ -275,6 +275,34 @@ public class KafkaCentral extends Thread {
         System.out.println("KAFKA: " + tipo + " enviado a " + stationId);
     }
 
+    public void solicitarRiego(String stationId, String operatorId, int duracion)throws Exception {
+
+        if (duracion <= 0) {
+            throw new IllegalArgumentException("La duracion debe ser mayor que cero");
+        }
+
+        KafkaProducer<String, String> p = productorActivo;
+
+        if (p == null) {
+            throw new IllegalStateException("El servicio Kafka de Central no esta preparado");
+        }
+
+        ObjectNode solicitud = json.createObjectNode();
+
+        solicitud.put("schemaVersion", 1);
+        solicitud.put("eventId", UUID.randomUUID().toString());
+        solicitud.put("eventType", "WATERING_REQUESTED");
+        solicitud.put("occurredAt", Instant.now().toString());
+        solicitud.put("requestId", UUID.randomUUID().toString());
+        solicitud.put("stationId", stationId);
+        solicitud.put("operatorId", operatorId);
+        solicitud.put("durationSeconds", duracion);
+
+        p.send(new ProducerRecord<>("wm.watering.requests",stationId,json.writeValueAsString(solicitud))).get();
+
+        System.out.println("Solicitud publicada para " + stationId);
+    }
+
     @Override
     public void run() {
         try (

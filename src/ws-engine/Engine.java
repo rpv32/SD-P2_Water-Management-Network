@@ -403,14 +403,17 @@ public class Engine{
 
         switch (sc.nextLine().trim()) {
                     case "1":
-                        System.out.print("Duracion en segundos: ");
                         try {
-                            int d = Integer.parseInt(sc.nextLine().trim());
-                            if (!IniciarRiego("LOCAL", d)) {
-                                System.out.println("No se puede iniciar el riego");
-                            }
-                        } catch (NumberFormatException e) {
-                            System.out.println("Duracion no valida");
+                            System.out.print("ID del operario registrado: ");
+                            String operador = sc.nextLine().trim();
+
+                            System.out.print("Duracion en segundos: ");
+                            int duracion = Integer.parseInt(sc.nextLine().trim());
+
+                            solicitarRiegoManual(operador, duracion);
+
+                        } catch (Exception e) {
+                            System.out.println("No se pudo solicitar el riego: " + e.getMessage());
                         }
                         break;
                     case "2":
@@ -469,6 +472,40 @@ public class Engine{
         if(Regando && SegundosRegados >= DuracionObjetivo){
             PararRiego("TIME_LIMIT");
         }
+    }
+
+    private void solicitarRiegoManual(String operatorId, int duracion) throws Exception {
+
+        if (duracion <= 0) {
+            throw new IllegalArgumentException("La duracion debe ser mayor que cero");
+        }
+
+        synchronized (this) {
+            if (Regando || Bloqueado || Averiado|| !monitorConectado || resultadoPendiente != null) {
+                throw new IllegalStateException("La estacion no puede solicitar un nuevo riego");
+            }
+        }
+
+        KafkaProducer<String, String> p = productor;
+
+        if (p == null) {
+            throw new IllegalStateException("Kafka no esta preparado");
+        }
+
+        ObjectNode solicitud = json.createObjectNode();
+
+        solicitud.put("schemaVersion", 1);
+        solicitud.put("eventId", UUID.randomUUID().toString());
+        solicitud.put("eventType", "WATERING_REQUESTED");
+        solicitud.put("occurredAt", Instant.now().toString());
+        solicitud.put("requestId", UUID.randomUUID().toString());
+        solicitud.put("stationId", StationId);
+        solicitud.put("operatorId", operatorId);
+        solicitud.put("durationSeconds", duracion);
+
+        p.send(new ProducerRecord<>("wm.watering.requests",StationId,json.writeValueAsString(solicitud))).get();
+
+        System.out.println("[ENGINE] Solicitud enviada. El riego solo comenzara si Central lo autoriza.");
     }
 
     public synchronized boolean IniciarRiego(String OperatorId, int Duracion){
