@@ -353,6 +353,134 @@ public class KafkaCentral extends Thread {
         productor.send(new ProducerRecord<>("wm.fo." + operatorId + ".events",requestId,json.writeValueAsString(respuesta))).get();
     }
 
+    public synchronized String ejecutarAccionWeb(
+        String accion,
+        String stationId,
+        String operatorId,
+        int duracion) throws Exception {
+
+		if (!java.util.Set.of("START", "BLOCK", "ACTIVATE").contains(accion)) {
+			throw new IllegalArgumentException("Accion no valida");
+		}
+
+		if (stationId == null || stationId.isBlank()) {
+			throw new IllegalArgumentException("Debe indicar una estacion");
+		}
+
+		if ("START".equals(accion)) {
+			if (operatorId == null
+					|| !operatorId.matches("[A-Za-z0-9_-]+")
+					|| !db.existeOperador(operatorId)) {
+				throw new IllegalArgumentException(
+						"Operario inexistente o no valido");
+			}
+
+			if (duracion <= 0) {
+				throw new IllegalArgumentException(
+						"La duracion debe ser mayor que cero");
+			}
+		}
+
+		// Una estacion concreta o todas las registradas.
+		java.util.List<String> destinos = new java.util.ArrayList<>();
+
+		if ("*".equals(stationId)) {
+			JsonNode estaciones = json.readTree(db.listarEstacionesJson());
+
+			for (JsonNode estacion : estaciones) {
+				String id = estacion.path("stationId").asText();
+
+				if (db.existeEstacion(id)) {
+					destinos.add(id);
+				}
+			}
+		} else {
+			if (!db.existeEstacion(stationId)) {
+				throw new IllegalArgumentException(
+						"La estacion no existe o esta inactiva");
+			}
+
+			destinos.add(stationId);
+		}
+
+		if (destinos.isEmpty()) {
+			throw new IllegalArgumentException("No hay estaciones");
+		}
+
+		StringBuilder resumen = new StringBuilder();
+
+		// Productor independiente del consumidor Kafka de Central.
+		try (KafkaProducer<String, String> productorWeb =
+					new KafkaProducer<>(propiedadesProductor())) {
+
+			for (String id : destinos) {
+				try {
+					if ("START".equals(accion)) {
+						ObjectNode solicitud = json.createObjectNode();
+
+						solicitud.put("schemaVersion", 1);
+						solicitud.put("eventId", UUID.randomUUID().toString());
+						solicitud.put("eventType", "WATERING_REQUESTED");
+						solicitud.put("occurredAt", Instant.now().toString());
+						solicitud.put("requestId", UUID.randomUUID().toString());
+						solicitud.put("stationId", id);
+						solicitud.put("operatorId", operatorId);
+						solicitud.put("durationSeconds", duracion);
+
+						// Se publica en el flujo normal de solicitudes.
+						// Central comprobara disponibilidad y autorizara o denegara.
+						productorWeb.send(new ProducerRecord<>(
+								"wm.watering.requests",
+								id,
+								json.writeValueAsString(solicitud)
+						)).get();
+
+						resumen.append(id)
+								.append(": solicitud enviada; pendiente de autorizacion. ");
+
+					} else {
+						ObjectNode orden = json.createObjectNode();
+
+						orden.put("schemaVersion", 1);
+						orden.put("eventId", UUID.randomUUID().toString());
+						orden.put("eventType",
+								"BLOCK".equals(accion)
+										? "BLOCK_STATION"
+										: "ACTIVATE_STATION");
+						orden.put("occurredAt", Instant.now().toString());
+						orden.put("stationId", id);
+
+						// Se registra primero la intencion de Central.
+						if ("BLOCK".equals(accion)) {
+							db.bloquearEstacion(id);
+						} else {
+							db.activarEstacion(id);
+						}
+
+						productorWeb.send(new ProducerRecord<>(
+								"wm.station.commands",
+								id,
+								json.writeValueAsString(orden)
+						)).get();
+
+						resumen.append(id)
+								.append(": orden enviada. ");
+					}
+
+				} catch (Exception e) {
+					resumen.append(id)
+							.append(": ERROR; resultado no confirmado. ");
+
+					System.err.println(
+							"WEB: error ejecutando " + accion
+							+ " sobre " + id + ": " + e.getMessage());
+				}
+			}
+		}
+
+		return resumen.toString();
+	}
+
     @Override
     public void run() {
         try (

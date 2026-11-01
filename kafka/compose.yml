@@ -21,6 +21,8 @@ services:
       context: ..
       dockerfile: docker/dockerfile
     container_name: central
+    stdin_open: true
+    tty: true
     depends_on:
       - broker
     ports:
@@ -51,6 +53,8 @@ services:
       context: ..
       dockerfile: docker/dockerfile
     container_name: engine-ws01
+    stdin_open: true
+    tty: true
     depends_on:
       - monitor
     entrypoint: ["java", "-Dorg.slf4j.simpleLogger.defaultLogLevel=warn", "-cp", "app.jar", "Engine", "monitor-ws01", "6000", "WS-01", "broker:29092"]
@@ -60,6 +64,8 @@ services:
       context: ..
       dockerfile: docker/dockerfile
     container_name: fo-op01
+    stdin_open: true
+    tty: true
     depends_on:
       - broker
     entrypoint: ["java", "-Dorg.slf4j.simpleLogger.defaultLogLevel=warn", "-cp", "app.jar", "WM_FO", "broker:29092", "OP-01"]
@@ -69,6 +75,8 @@ services:
       context: ..
       dockerfile: docker/dockerfile
     container_name: fo-op02
+    stdin_open: true
+    tty: true
     depends_on:
       - broker
     entrypoint: ["java", "-Dorg.slf4j.simpleLogger.defaultLogLevel=warn", "-cp", "app.jar", "WM_FO", "broker:29092", "OP-02"]

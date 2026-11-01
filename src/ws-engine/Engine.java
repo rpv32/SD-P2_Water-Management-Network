@@ -743,7 +743,6 @@ public class Engine{
            System.out.println("Engine conectado a la estacion " + Engine.StationId);
 
             Engine.Iniciar(skSocket, BoostrapServer);
-            System.exit(0);
 
         }catch(ConnectException e){
             System.out.println("No se ha podido establecer conexion con el monitor.");

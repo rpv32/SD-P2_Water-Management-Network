@@ -72,7 +72,14 @@ public class WM_WS_M {
 				engineCause = "ENGINE_TIMEOUT";
     			engineHealth = "KO";
     			System.out.println("Engine sin respuesta. Esperando nueva conexion...");
-   		 		return;
+   		 		try {
+					Engine.close();
+				} catch (IOException e) {
+					System.out.println(
+							"Error al cerrar el socket del Engine: "
+							+ e.getMessage());
+				}
+				return;
 			}
 			else{
 				String[] c = Respuesta.split("#",-1);
@@ -268,7 +275,17 @@ public class WM_WS_M {
 						wm_ws_m.engineCause = "";
 						wm_ws_m.engineSessionId = "";
 
-						wm_ws_m.HiloEngine(skEngine);
+						try {
+							wm_ws_m.HiloEngine(skEngine);
+						} finally {
+							try {
+								skEngine.close();
+							} catch (IOException e) {
+								System.out.println(
+										"Error al cerrar la conexion con Engine: "
+										+ e.getMessage());
+							}
+						}
 
 					} catch (IOException e) {
 						wm_ws_m.engineCause = "ENGINE_TIMEOUT";
