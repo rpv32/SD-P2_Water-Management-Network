@@ -46,8 +46,10 @@ public class WM_WS_M {
 		try {
        		Engine.setSoTimeout(5000);
    		} catch (SocketException e) {
-       		running = false;
-       		return;
+       		engineCause = "ENGINE_TIMEOUT";
+			engineHealth = "KO";
+
+			System.out.println("No se pudo preparar el socket del Engine" + e.getMessage());
    		}
 
 		while(running){
