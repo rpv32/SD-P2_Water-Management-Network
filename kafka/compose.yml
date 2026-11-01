@@ -69,6 +69,9 @@ services:
     depends_on:
       - broker
     entrypoint: ["java", "-Dorg.slf4j.simpleLogger.defaultLogLevel=warn", "-cp", "app.jar", "WM_FO", "broker:29092", "OP-01"]
+    volumes:
+      - fo1-data:/app/archivos_fo
+      - ./servicios:/servicios:ro
 
   fo2:
     build:
@@ -80,6 +83,11 @@ services:
     depends_on:
       - broker
     entrypoint: ["java", "-Dorg.slf4j.simpleLogger.defaultLogLevel=warn", "-cp", "app.jar", "WM_FO", "broker:29092", "OP-02"]
+    volumes:
+      - fo2-data:/app/archivos_fo
+      - ./servicios:/servicios:ro
 
 volumes:
   central-data:
+  fo1-data:
+  fo2-data:
