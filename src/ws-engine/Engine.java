@@ -38,6 +38,8 @@ public class Engine{
     private boolean Fuga;
     private volatile boolean running;
     private volatile boolean monitorConectado;
+    private String hostMonitor;
+    private int puertoMonitor;
     private volatile String RequestId;
     private volatile boolean RiegoKafka;
     private final ObjectMapper json = new ObjectMapper();
@@ -198,6 +200,77 @@ public class Engine{
             kafkaEjecutando = false;
             productor = null;
             consumidor = null;
+        }
+    }
+
+    private void mantenerConexionMonitor(Socket socketInicial) {
+        Socket socketMonitor = socketInicial;
+
+        while (running) {
+            try {
+                if (socketMonitor == null) {
+                    Socket nuevoSocket = new Socket();
+
+                    try {
+                        nuevoSocket.connect(new InetSocketAddress(hostMonitor, puertoMonitor),3000);
+                        nuevoSocket.setSoTimeout(5000);
+
+                        String messageId = UUID.randomUUID().toString();
+
+                        escribeSocket(nuevoSocket,"ENGINE_HELLO#" + messageId + "#" + StationId);
+
+                        String respuesta = leeSocket(nuevoSocket);
+
+                        String[] campos = respuesta == null? new String[0]: respuesta.split("#", -1);
+
+                        if (campos.length != 4|| !campos[0].equals("ENGINE_HELLO_RESULT")|| !campos[1].equals(messageId)|| !campos[2].equals("OK")|| !campos[3].isEmpty()) {
+                            throw new IOException("Handshake rechazado por Monitor: "+ respuesta);
+                        }
+
+                        socketMonitor = nuevoSocket;
+
+                    } catch (IOException e) {
+                        try {
+                            nuevoSocket.close();
+                        } catch (IOException ignored) {
+                            throw e;
+                        }
+                    }
+                }
+                    monitorConectado = true;
+
+                    System.out.println("[ENGINE] Conectado al Monitor de " + StationId);
+
+                    HiloMonitor(socketMonitor);
+
+            } catch (IOException e) {
+                System.out.println("[ENGINE] Monitor no disponible: " + e.getMessage());
+
+            } finally {
+                monitorConectado = false;
+
+                if (socketMonitor != null) {
+                    try {
+                        socketMonitor.close();
+                    } catch (IOException ignored) {
+                    }
+                }
+
+                socketMonitor = null;
+            }
+
+            if (!running) {
+                return;
+            }
+
+            System.out.println("[ENGINE] Sin Monitor. No se admiten nuevos riegos. "+ "Reintentando conexion en 2 segundos...");
+
+            try {
+                Thread.sleep(2000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
         }
     }
 
@@ -645,6 +718,8 @@ public class Engine{
             String stationId = args[2];
             String BoostrapServer = args[3];
             Engine.StationId = stationId;
+            Engine.hostMonitor = args[0];
+        Engine.puertoMonitor = PuertoMonitor;
 
             Socket skSocket = new Socket(args[0], PuertoMonitor);
 
