@@ -58,6 +58,7 @@ public class WM_FO {
     public WM_FO(String bootstrapServers, String operatorId) {
         this.operatorId = operatorId;
         this.topicEventos = "wm.fo." + operatorId + ".events";
+        asegurarTopicOperario(bootstrapServers, operatorId);
 
         // Configuracion del productor: envia claves y valores de tipo String.
         Properties p = new Properties();
@@ -542,6 +543,41 @@ public class WM_FO {
         productor.send(new ProducerRecord<>(TOPIC_SOLICITUDES,stationId,contenido)).get();
 
         System.out.println("Solicitud publicada. Pendiente de respuesta de Central.");
+    }
+
+    private static void asegurarTopicOperario(String bootstrapServers,String operatorId) {
+
+        Properties propiedades = new Properties();
+
+        propiedades.put("bootstrap.servers", bootstrapServers);
+        propiedades.put("request.timeout.ms", "10000");
+        propiedades.put("default.api.timeout.ms", "15000");
+
+        String topic = "wm.fo." + operatorId + ".events";
+
+        try (var admin = org.apache.kafka.clients.admin.Admin.create(propiedades)) {
+
+            var nuevoTopic = new org.apache.kafka.clients.admin.NewTopic(topic, 1, (short) 1);
+
+            try {
+                admin.createTopics(List.of(nuevoTopic)).all().get(20, TimeUnit.SECONDS);
+                System.out.println("Topic creado: " + topic);
+
+            } catch (java.util.concurrent.ExecutionException e) {
+                if (!(e.getCause()instanceof org.apache.kafka.common.errors.TopicExistsException)) {
+                    throw new IllegalStateException("No se pudo crear el topic del operario",e.getCause());
+                }
+                System.out.println("Topic ya existente: " + topic);
+            }
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+
+            throw new IllegalStateException("Creacion del topic interrumpida", e);
+
+        } catch (java.util.concurrent.TimeoutException e) {
+            throw new IllegalStateException("Timeout creando el topic del operario", e);
+        }
     }
 
     public static void main(String[] args) {

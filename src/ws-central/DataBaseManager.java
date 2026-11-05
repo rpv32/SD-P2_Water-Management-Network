@@ -28,7 +28,8 @@ public class DataBaseManager {
         conexion = DriverManager.getConnection("jdbc:sqlite:" + rutaDb);   // crea wm.db si no existe
 
         try (Statement st = conexion.createStatement()) {
-            st.execute("PRAGMA foreign_keys = ON");                        // hay que activarlo en cada conexion
+            st.execute("PRAGMA foreign_keys = ON");
+            st.execute("PRAGMA busy_timeout = 5000");                        // hay que activarlo en cada conexion
         }
         crearEsquema();
         asegurarEstadoInicial();
@@ -774,6 +775,46 @@ public class DataBaseManager {
         }
 
         return json.append("]").toString();
+    }
+
+    public synchronized void altaEstacion(
+        String stationId,
+        String ubicacion) throws SQLException {
+
+        if (stationId == null|| !stationId.matches("[A-Za-z0-9_-]+")|| ubicacion == null|| ubicacion.isBlank()) {
+            throw new IllegalArgumentException("Identificador o ubicacion no validos");
+        }
+
+        String t = ahora();
+
+        try {
+            comenzar();
+
+            update(
+                    "INSERT INTO stations (station_id, location_name, active, created_at, updated_at) VALUES (?, ?, 1, ?, ?) ON CONFLICT(station_id) DO NOTHING",stationId, ubicacion, t, t);
+
+            update(
+                    "INSERT OR IGNORE INTO station_runtime_state (station_id, visible_status, monitor_connected,engine_health, blocked, current_flow_lpm, current_volume_litres, last_status_change_at, updated_at) VALUES (?, 'DISCONNECTED', 0, 'UNKNOWN', 0, 0, 0, ?, ?)",stationId, t, t);
+            confirmar();
+
+        } catch (SQLException e) {
+            deshacer();
+            throw e;
+        }
+    }
+
+    public synchronized void altaOperario(
+            String operatorId,
+            String nombre) throws SQLException {
+
+        if (operatorId == null|| !operatorId.matches("[A-Za-z0-9_-]+")|| nombre == null|| nombre.isBlank()) {
+
+            throw new IllegalArgumentException("Identificador o nombre no validos");
+        }
+
+        String t = ahora();
+
+        update("INSERT INTO operators (operator_id, full_name, active, created_at, updated_at) VALUES (?, ?, 1, ?, ?) ON CONFLICT(operator_id) DO NOTHING",operatorId, nombre, t, t);
     }
     
 }

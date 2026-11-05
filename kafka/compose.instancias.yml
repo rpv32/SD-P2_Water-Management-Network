@@ -1,0 +1,32 @@
+services:
+  monitor:
+    image: ${WM_IMAGE:?Debe definir WM_IMAGE}
+    entrypoint: ["java"]
+    networks:
+      - wm
+
+  engine:
+    image: ${WM_IMAGE:?Debe definir WM_IMAGE}
+    entrypoint: ["java"]
+    stdin_open: true
+    tty: true
+    networks:
+      - wm
+
+  fo:
+    image: ${WM_IMAGE:?Debe definir WM_IMAGE}
+    entrypoint: ["java"]
+    stdin_open: true
+    tty: true
+    environment:
+      FO_WEB_PORT: "8081"
+      FO_CONSOLE: "false"
+    volumes:
+      - ./servicios:/servicios:ro
+    networks:
+      - wm
+
+networks:
+  wm:
+    external: true
+    name: ${WM_NETWORK:?Debe definir WM_NETWORK}
