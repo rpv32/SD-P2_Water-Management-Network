@@ -10,6 +10,11 @@ function Inicializar-WM {
         throw "No se encuentra el contenedor central."
     }
 
+    
+    if (-not $datos[0].State.Running) {
+        throw "Central debe estar arrancada antes de crear instancias."
+    }
+
     $datos = docker inspect central | ConvertFrom-Json
 
     $red = $datos[0].NetworkSettings.Networks.PSObject.Properties.Name |
