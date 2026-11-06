@@ -10,12 +10,12 @@ function Inicializar-WM {
         throw "No se encuentra el contenedor central."
     }
 
-    
+    $datos = docker inspect central | ConvertFrom-Json
+
     if (-not $datos[0].State.Running) {
         throw "Central debe estar arrancada antes de crear instancias."
     }
 
-    $datos = docker inspect central | ConvertFrom-Json
 
     $red = $datos[0].NetworkSettings.Networks.PSObject.Properties.Name |
         Select-Object -First 1
@@ -90,7 +90,7 @@ function Nueva-WS {
         --name $engine `
         -v "${volumen}:/data" `
         engine `
-        -Dorg.slf4j.simpleLogger.defaultLogLevel=warn `
+        "-Dorg.slf4j.simpleLogger.defaultLogLevel=warn" `
         -cp app.jar Engine $monitor 6000 $Id broker:29092
 
     if ($LASTEXITCODE -ne 0) {
@@ -142,7 +142,7 @@ function Nuevo-FO {
         -p "${PuertoWeb}:8081" `
         -v "${volumen}:/app/archivos_fo" `
         fo `
-        -Dorg.slf4j.simpleLogger.defaultLogLevel=warn `
+        "-Dorg.slf4j.simpleLogger.defaultLogLevel=warn" `
         -cp app.jar WM_FO broker:29092 $Id
 
     if ($LASTEXITCODE -ne 0) {
