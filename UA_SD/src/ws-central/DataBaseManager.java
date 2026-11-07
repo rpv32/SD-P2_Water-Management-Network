@@ -735,46 +735,27 @@ public class DataBaseManager {
     }
 
     public synchronized String listarEstacionesJson() {
-        StringBuilder json = new StringBuilder("[");
-
-        String sql = """
-            SELECT s.station_id, s.location_name, r.visible_status,
-                r.monitor_connected, r.engine_health,
-                r.current_flow_lpm, r.current_volume_litres, r.current_operator_id
-            FROM stations s
-            JOIN station_runtime_state r ON r.station_id = s.station_id
-            ORDER BY s.station_id
-            """;
-
-        try (PreparedStatement ps = conexion.prepareStatement(sql);
-            ResultSet rs = ps.executeQuery()) {
-
-            boolean primero = true;
-
+        var lista = new com.fasterxml.jackson.databind.ObjectMapper().createArrayNode();
+        String sql = "SELECT s.station_id,s.location_name,r.visible_status,r.monitor_connected,"
+            + "r.engine_health,r.current_flow_lpm,r.current_volume_litres,r.current_operator_id "
+            + "FROM stations s JOIN station_runtime_state r ON r.station_id=s.station_id ORDER BY s.station_id";
+        try (PreparedStatement ps = conexion.prepareStatement(sql); ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
-                if (!primero) {
-                    json.append(",");
-                }
-                primero = false;
-
-                json.append("{")
-                    .append("\"stationId\":\"").append(rs.getString("station_id")).append("\",")
-                    .append("\"location\":\"").append(rs.getString("location_name")).append("\",")
-                    .append("\"status\":\"").append(rs.getString("visible_status")).append("\",")
-                    .append("\"monitorConnected\":").append(rs.getInt("monitor_connected")).append(",")
-                    .append("\"engineHealth\":\"").append(rs.getString("engine_health")).append("\",")
-                    .append("\"operatorId\":\"")
-                    .append(rs.getString("current_operator_id") == null ? "" : rs.getString("current_operator_id"))
-                    .append("\",")
-                    .append("\"flow\":").append(rs.getDouble("current_flow_lpm")).append(",")
-                    .append("\"volume\":").append(rs.getDouble("current_volume_litres"))
-                    .append("}");
+                var e = lista.addObject();
+                e.put("stationId", rs.getString("station_id"));
+                e.put("location", rs.getString("location_name"));
+                e.put("status", rs.getString("visible_status"));
+                e.put("monitorConnected", rs.getInt("monitor_connected"));
+                e.put("engineHealth", rs.getString("engine_health"));
+                String op = rs.getString("current_operator_id");
+                e.put("operatorId", op == null ? "" : op);
+                e.put("flow", rs.getDouble("current_flow_lpm"));
+                e.put("volume", rs.getDouble("current_volume_litres"));
             }
-        } catch (SQLException e) {
-            System.out.println("Error BD listarEstacionesJson: " + e.getMessage());
+        } catch (SQLException ex) {
+            throw new IllegalStateException("No se pudieron consultar las estaciones", ex);
         }
-
-        return json.append("]").toString();
+        return lista.toString();
     }
 
     public synchronized void altaEstacion(
@@ -817,4 +798,13 @@ public class DataBaseManager {
         update("INSERT INTO operators (operator_id, full_name, active, created_at, updated_at) VALUES (?, ?, 1, ?, ?) ON CONFLICT(operator_id) DO NOTHING",operatorId, nombre, t, t);
     }
     
+
+    // Propaga errores SQL: un fallo no debe confundirse con un ID desconocido.
+    public synchronized boolean registroActivo(String tipo, String id) throws SQLException {
+        if ("station".equals(tipo))
+            return existe("SELECT 1 FROM stations WHERE station_id = ? AND active = 1", id);
+        if ("operator".equals(tipo))
+            return existe("SELECT 1 FROM operators WHERE operator_id = ? AND active = 1", id);
+        throw new IllegalArgumentException("Tipo no valido");
+    }
 }

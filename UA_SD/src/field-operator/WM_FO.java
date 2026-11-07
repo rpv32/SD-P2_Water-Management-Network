@@ -30,6 +30,13 @@ public class WM_FO {
 
     // Jackson permite construir e interpretar los mensajes JSON.
     private final ObjectMapper json = new ObjectMapper();
+    private com.sun.net.httpserver.HttpServer web;
+    private final java.util.concurrent.ExecutorService executorWeb =
+        java.util.concurrent.Executors.newFixedThreadPool(4);
+    private volatile String mensajeWeb = "Sin acciones pendientes";
+    private final java.util.ArrayDeque<String> eventosWeb = new java.util.ArrayDeque<>();
+    private final java.util.concurrent.atomic.AtomicBoolean ficheroEnCurso =
+        new java.util.concurrent.atomic.AtomicBoolean();
 
     private final KafkaProducer<String, String> productor;
     private final KafkaConsumer<String, String> consumidor;
@@ -56,8 +63,22 @@ public class WM_FO {
     private final java.util.Map<String,java.util.concurrent.CompletableFuture<String>> finalesServicio = new java.util.concurrent.ConcurrentHashMap<>();
 
     public WM_FO(String bootstrapServers, String operatorId) {
+        validarOperario(operatorId);
         this.operatorId = operatorId;
         this.topicEventos = "wm.fo." + operatorId + ".events";
+        try {
+            var archivo = CARPETA_ARCHIVOS.resolve("web-eventos-" + operatorId + ".json");
+            if (java.nio.file.Files.exists(archivo)) {
+                var guardados = json.readTree(java.nio.file.Files.readString(archivo));
+                if (!guardados.isArray()) throw new java.io.IOException("Historial no valido");
+                for (var evento : guardados) {
+                    if (eventosWeb.size() >= 100) eventosWeb.removeFirst();
+                    eventosWeb.addLast(evento.asText());
+                }
+            }
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("No se pudo recuperar el historial del FO", e);
+        }
         asegurarTopicOperario(bootstrapServers, operatorId);
 
         // Configuracion del productor: envia claves y valores de tipo String.
@@ -215,6 +236,17 @@ public class WM_FO {
         }
 
         System.out.println();
+        synchronized (eventosWeb) {
+            if (eventosWeb.size() >= 100) eventosWeb.removeFirst();
+            eventosWeb.addLast(json.writerWithDefaultPrettyPrinter().writeValueAsString(evento));
+            // Guardar antes de confirmar offsets permite recuperar el resultado tras reiniciar FO.
+            java.nio.file.Files.createDirectories(CARPETA_ARCHIVOS);
+            var destino = CARPETA_ARCHIVOS.resolve("web-eventos-" + operatorId + ".json");
+            var temporal = CARPETA_ARCHIVOS.resolve("web-eventos-" + operatorId + ".tmp");
+            java.nio.file.Files.writeString(temporal, json.writeValueAsString(eventosWeb));
+            java.nio.file.Files.move(temporal, destino, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+        }
         System.out.println("=== EVENTO PARA " + operatorId + " ===");
         System.out.println(
                 json.writerWithDefaultPrettyPrinter()
@@ -251,38 +283,6 @@ public class WM_FO {
         }
 
         publicarSolicitud(UUID.randomUUID().toString(),stationId,duracion);
-        // requestId identifica la solicitud durante todo su recorrido.
-        String requestId = UUID.randomUUID().toString();
-
-        // Construimos el mensaje siguiendo el protocolo del proyecto.
-        ObjectNode solicitud = json.createObjectNode();
-        solicitud.put("schemaVersion", 1);
-        solicitud.put("eventId", UUID.randomUUID().toString());
-        solicitud.put("eventType", "WATERING_REQUESTED");
-        solicitud.put("occurredAt", Instant.now().toString());
-        solicitud.put("requestId", requestId);
-        solicitud.put("stationId", stationId);
-        solicitud.put("operatorId", operatorId);
-        solicitud.put("durationSeconds", duracion);
-
-        // La clave del mensaje es el identificador de la estacion.
-        ProducerRecord<String, String> registro = new ProducerRecord<>(TOPIC_SOLICITUDES, stationId, json.writeValueAsString(solicitud));
-
-        /*
-         * Mostramos el ID antes de enviar para poder localizar la solicitud
-         * incluso si no conseguimos confirmar su publicacion.
-         */
-        System.out.println("requestId: " + requestId);
-        
-        solicitudesPendientes.put(requestId, json.writeValueAsString(solicitud));
-        tiemposPendientes.put(requestId, Instant.now());
-
-        // get espera a que el envio termine correctamente o produzca un error.
-        productor.send(registro).get();
-        
-        System.out.println("Esperando respuesta de Central durante 4 segundos...");
-        System.out.println("Solicitud publicada en Kafka.");
-        System.out.println("Pendiente de respuesta de Central.");
     }
 
     // Gestiona la entrada del usuario, mientras el otro hilo recibe eventos.
@@ -360,17 +360,21 @@ public class WM_FO {
             boolean inicioCompletado = inicioReceptor.await(30, TimeUnit.SECONDS);
 
             if (!inicioCompletado) {
-                System.err.println("El receptor no se ha preparado en 30 segundos.");
-                return;
+                throw new IllegalStateException("El receptor no se ha preparado en 30 segundos");
             }
 
             if (!ejecutando) {
-                System.err.println("No se pudo iniciar el receptor: " + errorReceptor);
-                return;
+                throw new IllegalStateException("No se pudo iniciar el receptor: " + errorReceptor);
             }
 
             System.out.println("Operario conectado: " + operatorId);
-            mostrarMenu();
+            iniciarWeb();
+            System.out.println("FO_READY");
+            if (Boolean.parseBoolean(System.getenv().getOrDefault("FO_CONSOLE", "false"))) {
+                mostrarMenu();
+            } else {
+                while (ejecutando) Thread.sleep(500);
+            }
 
         } finally {
             // Cerramos tanto al salir del menu como si ocurre un error.
@@ -381,6 +385,8 @@ public class WM_FO {
     // Solicita el cierre del receptor y libera el productor.
     private void cerrar() throws InterruptedException {
         ejecutando = false;
+        if (web != null) web.stop(0);
+        executorWeb.shutdownNow();
 
         // Interrumpe la espera del consumidor para que pueda terminar.
         consumidor.wakeup();
@@ -597,7 +603,140 @@ public class WM_FO {
             WM_FO operario = new WM_FO(args[0], args[1]);
             operario.ejecutar();
         } catch (Exception e) {
-            System.err.println("No se pudo ejecutar WM_FO: " + e);
+            System.err.println("No se pudo ejecutar WM_FO: " + e.getMessage());
+            System.exit(1);
         }
+    }
+
+    private static void validarOperario(String id) {
+        String central = System.getenv("CENTRAL_URL");
+        if (central == null || central.isBlank())
+            throw new IllegalStateException("Falta CENTRAL_URL (URL de la web de Central)");
+        try {
+            var cliente = java.net.http.HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(5)).build();
+            var uri = java.net.URI.create(central.replaceAll("/+$", "")
+                + "/api/registro?tipo=operator&id="
+                + java.net.URLEncoder.encode(id, java.nio.charset.StandardCharsets.UTF_8));
+            var peticion = java.net.http.HttpRequest.newBuilder(uri)
+                .timeout(Duration.ofSeconds(8)).GET().build();
+            var respuesta = cliente.send(peticion, java.net.http.HttpResponse.BodyHandlers.ofString());
+            if (respuesta.statusCode() != 200)
+                throw new IllegalStateException("Central no pudo validar el operario (HTTP " + respuesta.statusCode() + ")");
+            String activo = respuesta.body().trim();
+            if (!activo.equals("true") && !activo.equals("false"))
+                throw new IllegalStateException("Respuesta de registro no valida");
+            if (activo.equals("false"))
+                throw new IllegalStateException("El operario " + id + " no existe o esta inactivo. Registralo en /altas.");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Validacion interrumpida", e);
+        } catch (java.io.IOException | IllegalArgumentException e) {
+            throw new IllegalStateException("No se pudo conectar con Central para validar el operario", e);
+        }
+    }
+
+    private void iniciarWeb() throws java.io.IOException {
+        int puerto = Integer.parseInt(System.getenv().getOrDefault("FO_WEB_PORT", "8081"));
+        web = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress(puerto), 0);
+        web.createContext("/", x -> {
+            String ruta = x.getRequestURI().getPath();
+            if ("/".equals(ruta) && "POST".equals(x.getRequestMethod())) {
+                try {
+                    String origen = x.getRequestHeaders().getFirst("Origin");
+                    String host = x.getRequestHeaders().getFirst("Host");
+                    if (origen != null && !origen.equals("http://" + host) && !origen.equals("https://" + host)) {
+                        x.sendResponseHeaders(403, -1); x.close(); return;
+                    }
+                    if (!ejecutando) throw new IllegalStateException("Receptor detenido");
+                    byte[] bytes = x.getRequestBody().readNBytes(8193);
+                    if (bytes.length > 8192) throw new IllegalArgumentException("Formulario demasiado grande");
+                    var datos = new java.util.HashMap<String, String>();
+                    for (String par : new String(bytes, java.nio.charset.StandardCharsets.UTF_8).split("&")) {
+                        String[] c = par.split("=", 2);
+                        if (c.length == 2) datos.put(c[0], java.net.URLDecoder.decode(c[1], java.nio.charset.StandardCharsets.UTF_8));
+                    }
+                    switch (datos.getOrDefault("accion", "")) {
+                        case "consultar" -> consultarEstaciones();
+                        case "regar" -> publicarSolicitud(UUID.randomUUID().toString(),
+                            datos.getOrDefault("estacion", "").trim(), Integer.parseInt(datos.getOrDefault("duracion", "0")));
+                        case "fichero" -> {
+                            var raiz = java.nio.file.Path.of("/servicios").toRealPath();
+                            var archivo = java.nio.file.Path.of(datos.getOrDefault("ruta", "")).toRealPath();
+                            if (!archivo.startsWith(raiz) || !java.nio.file.Files.isRegularFile(archivo))
+                                throw new IllegalArgumentException("El fichero debe estar dentro de /servicios");
+                            if (!ficheroEnCurso.compareAndSet(false, true))
+                                throw new IllegalArgumentException("Ya se esta ejecutando un fichero");
+                            new Thread(() -> {
+                                try {
+                                    ejecutarServiciosDesdeFichero(archivo.toString());
+                                    mensajeWeb = "Fichero terminado";
+                                } catch (Exception e) {
+                                    mensajeWeb = "Fichero detenido: " + e.getMessage();
+                                } finally { ficheroEnCurso.set(false); }
+                            }, "fo-fichero").start();
+                        }
+                        default -> throw new IllegalArgumentException("Accion no valida");
+                    }
+                    mensajeWeb = "Accion enviada. Espera su confirmacion en los eventos.";
+                } catch (IllegalArgumentException e) {
+                    mensajeWeb = "Datos no validos: " + e.getMessage();
+                } catch (Exception e) {
+                    mensajeWeb = "No se pudo confirmar la accion. Revisa los eventos antes de repetir.";
+                    System.err.println("FO WEB: " + e.getMessage());
+                }
+                x.getResponseHeaders().set("Location", "/");
+                x.sendResponseHeaders(303, -1); x.close(); return;
+            }
+            int estado = 200;
+            String tipo = "text/plain; charset=utf-8";
+            String respuesta;
+            if ("/".equals(ruta) && "GET".equals(x.getRequestMethod())) {
+                tipo = "text/html; charset=utf-8"; respuesta = htmlWeb();
+            } else if ("/eventos".equals(ruta) && "GET".equals(x.getRequestMethod())) {
+                synchronized (eventosWeb) {
+                    respuesta = "Operario: " + operatorId + "\n" + mensajeWeb + "\n\n"
+                        + String.join("\n\n", eventosWeb);
+                }
+            } else {
+                estado = 404; respuesta = "Ruta o metodo no encontrado";
+            }
+            byte[] bytes = respuesta.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            x.getResponseHeaders().set("Content-Type", tipo);
+            x.getResponseHeaders().set("Cache-Control", "no-store");
+            x.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
+            x.sendResponseHeaders(estado, bytes.length);
+            try (var salida = x.getResponseBody()) { salida.write(bytes); }
+        });
+        web.setExecutor(executorWeb);
+        web.start();
+        System.out.println("Web FO en puerto " + puerto);
+    }
+
+    private static String htmlWeb() {
+        return """
+        <!doctype html><html lang="es"><meta charset="utf-8"><title>Operario</title>
+        <style>body{font:16px system-ui;max-width:850px;margin:30px auto;padding:15px}
+        input,button{padding:8px;margin:5px}pre{background:#eee;padding:12px;white-space:pre-wrap;overflow-wrap:anywhere}</style>
+        <h1>Operario</h1>
+        <form method="post"><button name="accion" value="consultar">Consultar estaciones</button></form>
+        <h2>Solicitar riego</h2><form method="post">
+        <input type="hidden" name="accion" value="regar">
+        <input name="estacion" placeholder="WS-01" required pattern="[A-Za-z0-9_-]+">
+        <input name="duracion" type="number" min="1" step="1" value="20" required>
+        <button>Solicitar</button></form>
+        <h2>Servicios desde fichero</h2><form method="post">
+        <input type="hidden" name="accion" value="fichero">
+        <input name="ruta" placeholder="/servicios/prueba.txt" required><button>Ejecutar</button></form>
+        <h2>Mensajes del operario</h2><pre id="eventos">Conectando...</pre>
+        <script>
+        async function actualizar(){
+          try{const r=await fetch('/eventos');if(!r.ok)throw Error();
+          document.getElementById('eventos').textContent=await r.text();}
+          catch{document.getElementById('eventos').textContent='No se pudo conectar con el FO'}
+          setTimeout(actualizar,1500);
+        }actualizar();
+        </script></html>
+        """;
     }
 }

@@ -6,6 +6,7 @@ import java.util.UUID;
 public class WM_WS_M {
 
 	private volatile boolean running = true;
+    private volatile boolean centralAutorizada = false;
 	private volatile String engineHealth = "UNKNOWN";
 	private volatile String engineCause = "";
 	private volatile String engineSessionId = "";
@@ -181,17 +182,27 @@ public class WM_WS_M {
 				String[] campos = respuesta.split("#", -1);
 
 				if (campos.length != 5 || !campos[0].equals("REGISTER_RESULT") || !campos[1].equals(messageId) || !campos[2].equals("OK") || !campos[3].isEmpty()) {
-					throw new IOException("Registro no aceptado: " + respuesta);
+					if (campos.length == 5 && campos[0].equals("REGISTER_RESULT")
+                        && campos[1].equals(messageId) && campos[2].equals("ERROR")
+                        && !campos[3].equals("PERSISTENCE_ERROR")) {
+                        System.err.println("REGISTRO_DENEGADO: " + respuesta);
+                        System.exit(2);
+                    }
+                    throw new IOException("Respuesta de registro no valida: " + respuesta);
 				}
 
 				System.out.println("Estacion registrada correctamente en WM_Central");
+                centralAutorizada = true;
+                System.out.println("MONITOR_READY");
 
 				// Se queda aqui hasta perder Central.
 				// Al regresar, el bucle vuelve a conectar y registrar.
 				HiloCentral(central, stationId);
+                centralAutorizada = false;
 
 			} catch (IOException e) {
-				System.out.println("WM_Central no disponible: " + e.getMessage());
+				centralAutorizada = false;
+                System.out.println("WM_Central no disponible: " + e.getMessage());
 			}
 
 			if (!running) {
@@ -266,7 +277,11 @@ public class WM_WS_M {
 							continue;
 						}
 
-						wm_ws_m.escribeSocket(skEngine, "ENGINE_HELLO_RESULT#" + h[1] + "#OK#");
+						if (!wm_ws_m.centralAutorizada) {
+                            wm_ws_m.escribeSocket(skEngine, "ENGINE_HELLO_RESULT#" + h[1] + "#ERROR#CENTRAL_UNAVAILABLE");
+                            continue;
+                        }
+                        wm_ws_m.escribeSocket(skEngine, "ENGINE_HELLO_RESULT#" + h[1] + "#OK#");
 
 						System.out.println("Engine conectado");
 

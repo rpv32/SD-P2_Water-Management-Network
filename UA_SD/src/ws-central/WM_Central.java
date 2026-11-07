@@ -127,7 +127,9 @@ public class WM_Central {
 					com.fasterxml.jackson.databind.ObjectMapper mapper =
 				new com.fasterxml.jackson.databind.ObjectMapper();
 
-		servidor.createContext("/api/action", intercambio -> {
+		instalarAltas(servidor);
+
+        servidor.createContext("/api/action", intercambio -> {
 			int codigo;
 			var respuesta = mapper.createObjectNode();
 
@@ -728,4 +730,113 @@ public class WM_Central {
 		}
 	}
 
+
+    // Formularios y consultas comparten la misma lectura de pares clave=valor.
+    private static java.util.Map<String, String> parametros(String texto) {
+        var resultado = new java.util.HashMap<String, String>();
+        if (texto != null) for (String par : texto.split("&")) {
+            String[] c = par.split("=", 2);
+            if (c.length == 2) resultado.put(c[0],
+                java.net.URLDecoder.decode(c[1], StandardCharsets.UTF_8));
+        }
+        return resultado;
+    }
+
+    private static void instalarAltas(HttpServer servidor) {
+        servidor.createContext("/api/registro", x -> {
+            int estado = 200;
+            String respuesta;
+            try {
+                if (!"/api/registro".equals(x.getRequestURI().getPath())) {
+                    estado = 404; respuesta = "Ruta no encontrada";
+                } else if (!"GET".equals(x.getRequestMethod())) {
+                    estado = 405; respuesta = "Usa GET";
+                    x.getResponseHeaders().set("Allow", "GET");
+                } else {
+                    var p = parametros(x.getRequestURI().getRawQuery());
+                    String id = p.getOrDefault("id", "");
+                    if (!id.matches("[A-Za-z0-9_-]{1,64}"))
+                        throw new IllegalArgumentException("ID no valido");
+                    respuesta = Boolean.toString(db.registroActivo(p.getOrDefault("tipo", ""), id));
+                }
+            } catch (IllegalArgumentException e) {
+                estado = 400; respuesta = "Parametros no validos";
+            } catch (Exception e) {
+                estado = 503; respuesta = "No se pudo consultar el registro";
+                System.err.println("Registro: " + e.getMessage());
+            }
+            byte[] bytes = respuesta.getBytes(StandardCharsets.UTF_8);
+            x.getResponseHeaders().set("Content-Type", "text/plain; charset=utf-8");
+            x.getResponseHeaders().set("Cache-Control", "no-store");
+            x.sendResponseHeaders(estado, bytes.length);
+            try (var salida = x.getResponseBody()) { salida.write(bytes); }
+        });
+
+        // Sin contrasena, como el resto del panel actual. Es una ruta publica.
+        servidor.createContext("/altas", x -> {
+            int estado = 200;
+            String respuesta;
+            String tipoContenido = "text/html; charset=utf-8";
+            try {
+                if (!"/altas".equals(x.getRequestURI().getPath())) {
+                    estado = 404; respuesta = "Ruta no encontrada";
+                } else if ("GET".equals(x.getRequestMethod())) {
+                    respuesta = """
+                    <!doctype html><html lang="es"><meta charset="utf-8"><title>Altas</title>
+                    <style>body{font:16px system-ui;max-width:600px;margin:40px auto;padding:15px}
+                    label{display:block;margin:15px 0}input,select,button{padding:8px}</style>
+                    <h1>Alta de estaciones y operarios</h1>
+                    <form method="post" action="/altas">
+                    <label>Tipo <select name="tipo"><option value="station">Estacion</option>
+                    <option value="operator">Operario</option></select></label>
+                    <label>ID <input name="id" required maxlength="64" pattern="[A-Za-z0-9_-]+"></label>
+                    <label>Ubicacion / nombre <input name="nombre" required maxlength="200"></label>
+                    <button>Registrar</button></form>
+                    <p id="resultado"></p><a href="/">Volver al panel</a>
+                    <script>if(location.search==='?ok')document.getElementById('resultado').textContent=
+                    'ID registrado y activo. Si ya existia, sus datos no se han cambiado.';</script></html>
+                    """;
+                } else if ("POST".equals(x.getRequestMethod())) {
+                    String origen = x.getRequestHeaders().getFirst("Origin");
+                    String host = x.getRequestHeaders().getFirst("Host");
+                    if (origen != null && !origen.equals("https://" + host)
+                            && !origen.equals("http://" + host)) {
+                        estado = 403; respuesta = "Origen no permitido";
+                    } else {
+                        byte[] bytes = x.getRequestBody().readNBytes(8193);
+                        if (bytes.length > 8192) throw new IllegalArgumentException("Formulario demasiado grande");
+                        var p = parametros(new String(bytes, StandardCharsets.UTF_8));
+                        String tipo = p.getOrDefault("tipo", "");
+                        String id = p.getOrDefault("id", "").trim();
+                        String nombre = p.getOrDefault("nombre", "").trim();
+                        if (!id.matches("[A-Za-z0-9_-]{1,64}") || nombre.isBlank() || nombre.length() > 200)
+                            throw new IllegalArgumentException("Datos no validos");
+                        if ("station".equals(tipo)) db.altaEstacion(id, nombre);
+                        else if ("operator".equals(tipo)) db.altaOperario(id, nombre);
+                        else throw new IllegalArgumentException("Tipo no valido");
+                        if (!db.registroActivo(tipo, id))
+                            throw new IllegalArgumentException("El ID ya existe pero esta inactivo; el alta no lo reactiva");
+                        x.getResponseHeaders().set("Location", "/altas?ok");
+                        x.sendResponseHeaders(303, -1); x.close(); return;
+                    }
+                } else {
+                    estado = 405; respuesta = "Usa GET o POST";
+                    x.getResponseHeaders().set("Allow", "GET, POST");
+                }
+            } catch (IllegalArgumentException e) {
+                estado = 400; respuesta = e.getMessage() + ". Vuelve atras para corregir el formulario.";
+                tipoContenido = "text/plain; charset=utf-8";
+            } catch (Exception e) {
+                estado = 503; respuesta = "No se pudo confirmar el alta. Comprueba el registro antes de repetir.";
+                tipoContenido = "text/plain; charset=utf-8";
+                System.err.println("Alta: " + e.getMessage());
+            }
+            byte[] bytes = respuesta.getBytes(StandardCharsets.UTF_8);
+            x.getResponseHeaders().set("Content-Type", tipoContenido);
+            x.getResponseHeaders().set("Cache-Control", "no-store");
+            x.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
+            x.sendResponseHeaders(estado, bytes.length);
+            try (var salida = x.getResponseBody()) { salida.write(bytes); }
+        });
+    }
 }
