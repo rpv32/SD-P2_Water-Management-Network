@@ -153,9 +153,8 @@ public class DataBaseManager {
     }
 
     public synchronized void listarEstaciones() {
-        String sql = "SELECT s.station_id, s.location_name, r.visible_status "
-                   + "FROM stations s JOIN station_runtime_state r ON r.station_id = s.station_id "
-                   + "ORDER BY s.station_id";
+        String sql = "SELECT s.station_id, s.location_name, r.visible_status " + "FROM stations s " + "JOIN station_runtime_state r ON r.station_id = s.station_id "
+                        + "WHERE s.active = 1 " + "ORDER BY s.station_id";
         try (PreparedStatement ps = conexion.prepareStatement(sql);
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
@@ -736,9 +735,8 @@ public class DataBaseManager {
 
     public synchronized String listarEstacionesJson() {
         var lista = new com.fasterxml.jackson.databind.ObjectMapper().createArrayNode();
-        String sql = "SELECT s.station_id,s.location_name,r.visible_status,r.monitor_connected,"
-            + "r.engine_health,r.current_flow_lpm,r.current_volume_litres,r.current_operator_id "
-            + "FROM stations s JOIN station_runtime_state r ON r.station_id=s.station_id ORDER BY s.station_id";
+        String sql = "SELECT s.station_id,s.location_name,r.visible_status,r.monitor_connected," + "r.engine_health,r.current_flow_lpm,r.current_volume_litres,r.current_operator_id "
+                        + "FROM stations s " + "JOIN station_runtime_state r ON r.station_id=s.station_id " + "WHERE s.active = 1 " + "ORDER BY s.station_id";
         try (PreparedStatement ps = conexion.prepareStatement(sql); ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
                 var e = lista.addObject();
