@@ -33,7 +33,22 @@ function Esperar-Modulo {
         $activo = docker inspect --format '{{.State.Running}}' $Nombre
         if ($LASTEXITCODE -ne 0) { throw "No se pudo inspeccionar $Nombre." }
         $logs = (docker logs --tail 150 $Nombre 2>&1 | Out-String)
-        if ($activo -ne 'true') { throw "El modulo $Nombre termino:`n$logs" }
+        if ($activo -ne 'true') { 
+            $estacionDenegada = $logs -match 'REGISTRO_DENEGADO:[^\r\n]*#ERROR#UNKNOWN_STATION#'
+            $operarioDenegado = $logs -match 'El operario [A-Za-z0-9_-]+ no existe o esta inactivo'
+
+            if ($estacionDenegada -or $operarioDenegado) {
+                docker container rm $Nombre | Out-Null
+
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Registro rechazado, pero no se pudo eliminar el contenedor $Nombre."
+                }
+
+                throw "El ID no existe o esta inactivo en Central. Contenedor $Nombre eliminado. Revisa el registro en /altas antes de volver a intentarlo."
+            }
+
+            throw "El modulo $Nombre termino:`n$logs"
+        }
         if ($logs -match [regex]::Escape($Marca)) { return }
         Start-Sleep -Seconds 1
     }
@@ -58,7 +73,7 @@ function Nueva-WS {
     Esperar-Modulo $monitor 'MONITOR_READY'
     docker compose -f $script:ComposeInstancias run -d --no-deps --name $engine `
         -v "${volumen}:/data" engine `
-        -Dorg.slf4j.simpleLogger.defaultLogLevel=warn `
+        "-Dorg.slf4j.simpleLogger.defaultLogLevel=warn" `
         -cp app.jar $script:ClaseEngine $monitor 6000 $Id $script:Kafka
     if ($LASTEXITCODE -ne 0) { throw "No se pudo crear $engine. Revisa el Monitor." }
     Write-Host "Monitor autorizado; Engine lanzado para $Id. Comprueba su estado en Central."
@@ -80,7 +95,7 @@ function Nuevo-FO {
     docker compose -f $script:ComposeInstancias run -d --no-deps --name $contenedor `
         -e "CENTRAL_URL=$script:UrlCentral" `
         -p "127.0.0.1:${PuertoWeb}:8081" -v "${volumen}:/app/archivos_fo" `
-        fo -Dorg.slf4j.simpleLogger.defaultLogLevel=warn `
+        fo "-Dorg.slf4j.simpleLogger.defaultLogLevel=warn" `
         -cp app.jar WM_FO $script:Kafka $Id
     if ($LASTEXITCODE -ne 0) { throw "No se pudo crear $contenedor." }
     Esperar-Modulo $contenedor 'FO_READY'
