@@ -807,4 +807,74 @@ public class DataBaseManager {
             return existe("SELECT 1 FROM operators WHERE operator_id = ? AND active = 1", id);
         throw new IllegalArgumentException("Tipo no valido");
     }
+
+    public synchronized void darDeBaja(String tipo, String id)
+        throws SQLException {
+
+        if (id == null || !id.matches("[A-Za-z0-9_-]{1,64}")) {
+            throw new IllegalArgumentException("ID no valido");
+        }
+
+        String tabla;
+        String columna;
+
+        // Solo se permiten estos nombres de tabla y columna.
+        if ("station".equals(tipo)) {
+            tabla = "stations";
+            columna = "station_id";
+        } else if ("operator".equals(tipo)) {
+            tabla = "operators";
+            columna = "operator_id";
+        } else {
+            throw new IllegalArgumentException("Tipo no valido");
+        }
+
+        try {
+            comenzar();
+
+            if (!existe(
+                    "SELECT 1 FROM " + tabla
+                    + " WHERE " + columna + " = ?",
+                    id)) {
+
+                throw new IllegalArgumentException("El ID no existe");
+            }
+
+            // No dar de baja una identidad con un servicio pendiente o activo.
+            if (existe(
+                    "SELECT 1 FROM watering_sessions "
+                    + "WHERE " + columna + " = ? "
+                    + "AND status IN ('AUTHORIZED', 'RUNNING')",
+                    id)) {
+
+                throw new IllegalArgumentException(
+                        "Tiene un riego pendiente o en curso. "
+                        + "Finalizalo antes de darlo de baja");
+            }
+
+            // Evita dejar un Monitor conectado a una estacion desactivada.
+            if ("station".equals(tipo)
+                    && existe(
+                        "SELECT 1 FROM station_runtime_state "
+                        + "WHERE station_id = ? AND monitor_connected = 1",
+                        id)) {
+
+                throw new IllegalArgumentException(
+                        "La estacion tiene un Monitor conectado. "
+                        + "Detenlo y espera a que aparezca desconectada");
+            }
+
+            update(
+                    "UPDATE " + tabla
+                    + " SET active = 0, updated_at = ? "
+                    + "WHERE " + columna + " = ?",
+                    ahora(), id);
+
+            confirmar();
+
+        } catch (SQLException | IllegalArgumentException e) {
+            deshacer();
+            throw e;
+        }
+    }
 }

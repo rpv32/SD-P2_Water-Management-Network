@@ -787,14 +787,20 @@ public class WM_Central {
                     label{display:block;margin:15px 0}input,select,button{padding:8px}</style>
                     <h1>Alta de estaciones y operarios</h1>
                     <form method="post" action="/altas">
+					<label>Acción
+						<select name="accion">
+							<option value="alta">Dar de alta</option>
+							<option value="baja">Dar de baja</option>
+						</select>
+					</label>
                     <label>Tipo <select name="tipo"><option value="station">Estacion</option>
                     <option value="operator">Operario</option></select></label>
                     <label>ID <input name="id" required maxlength="64" pattern="[A-Za-z0-9_-]+"></label>
-                    <label>Ubicacion / nombre <input name="nombre" required maxlength="200"></label>
-                    <button>Registrar</button></form>
+                    <label>Ubicacion / nombre <input name="nombre" maxlength="200"></label>
+                    <button>Aplicar</button></form>
                     <p id="resultado"></p><a href="/">Volver al panel</a>
                     <script>if(location.search==='?ok')document.getElementById('resultado').textContent=
-                    'ID registrado y activo. Si ya existia, sus datos no se han cambiado.';</script></html>
+                    'Operación completada correctamente.';</script></html>
                     """;
                 } else if ("POST".equals(x.getRequestMethod())) {
                     String origen = x.getRequestHeaders().getFirst("Origin");
@@ -807,15 +813,36 @@ public class WM_Central {
                         if (bytes.length > 8192) throw new IllegalArgumentException("Formulario demasiado grande");
                         var p = parametros(new String(bytes, StandardCharsets.UTF_8));
                         String tipo = p.getOrDefault("tipo", "");
-                        String id = p.getOrDefault("id", "").trim();
-                        String nombre = p.getOrDefault("nombre", "").trim();
-                        if (!id.matches("[A-Za-z0-9_-]{1,64}") || nombre.isBlank() || nombre.length() > 200)
-                            throw new IllegalArgumentException("Datos no validos");
-                        if ("station".equals(tipo)) db.altaEstacion(id, nombre);
-                        else if ("operator".equals(tipo)) db.altaOperario(id, nombre);
-                        else throw new IllegalArgumentException("Tipo no valido");
-                        if (!db.registroActivo(tipo, id))
-                            throw new IllegalArgumentException("El ID ya existe pero esta inactivo; el alta no lo reactiva");
+                        String accion = p.getOrDefault("accion", "alta");
+						String id = p.getOrDefault("id", "").trim();
+						String nombre = p.getOrDefault("nombre", "").trim();
+
+						if (!id.matches("[A-Za-z0-9_-]{1,64}")) {
+							throw new IllegalArgumentException("ID no valido");
+						}
+
+						if ("baja".equals(accion)) {
+
+							db.darDeBaja(tipo, id);
+
+						} else if ("alta".equals(accion)) {
+
+							if (nombre.isBlank() || nombre.length() > 200) {
+								throw new IllegalArgumentException(
+										"Introduce una ubicacion o nombre valido");
+							}
+
+							if ("station".equals(tipo)) {
+								db.altaEstacion(id, nombre);
+							} else if ("operator".equals(tipo)) {
+								db.altaOperario(id, nombre);
+							} else {
+								throw new IllegalArgumentException("Tipo no valido");
+							}
+
+							if (!db.registroActivo(tipo, id)) {
+								throw new IllegalArgumentException("El ID ya existe pero esta inactivo. " + "Dar de alta no lo reactiva");
+							}
                         x.getResponseHeaders().set("Location", "/altas?ok");
                         x.sendResponseHeaders(303, -1); x.close(); return;
                     }
