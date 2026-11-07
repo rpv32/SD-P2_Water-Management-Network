@@ -843,8 +843,10 @@ public class WM_Central {
 							if (!db.registroActivo(tipo, id)) {
 								throw new IllegalArgumentException("El ID ya existe pero esta inactivo. " + "Dar de alta no lo reactiva");
 							}
+						}
                         x.getResponseHeaders().set("Location", "/altas?ok");
-                        x.sendResponseHeaders(303, -1); x.close(); return;
+                        x.sendResponseHeaders(303, -1); x.close(); 
+						return;
                     }
                 } else {
                     estado = 405; respuesta = "Usa GET o POST";
