@@ -321,6 +321,11 @@ public class Engine{
         }
 
         synchronized (this){
+            if (sesionesEjecutadas.contains(sessionId) && (!Regando || !sessionId.equals(SessionId))) {
+                System.out.println("[ENGINE] Orden repetida de una sesion ya ejecutada: " + sessionId);
+                return;
+            }
+            
             if (!sesionesEjecutadas.contains(sessionId)) {
                 if (!IniciarRiegoKafka(sessionId, requestId, operatorId, duracion)) {
                     ObjectNode rechazo = json.createObjectNode();
