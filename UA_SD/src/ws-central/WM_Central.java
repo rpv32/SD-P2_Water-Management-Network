@@ -23,6 +23,7 @@ public class WM_Central {
 	private static Set<String> estacionesConectadas = new HashSet<String>();
 	private static DataBaseManager db;
 	private static KafkaCentral kafka;
+	private static final java.util.ArrayDeque<String> logsWeb = new java.util.ArrayDeque<>();
 
 	//Registra una estación como conectada, si ya estaba conectada devuelve false, si no devuelve true
 	public static synchronized boolean registrarConexion(String stationId){
@@ -256,6 +257,47 @@ public class WM_Central {
 					salida.write(cuerpo);
 				}
 			});
+			//Obtener logs de Central
+			servidor.createContext("/api/logs", intercambio -> {
+				if (!"/api/logs".equals(
+						intercambio.getRequestURI().getPath())) {
+
+					intercambio.sendResponseHeaders(404, -1);
+					intercambio.close();
+					return;
+				}
+
+				if (!"GET".equals(intercambio.getRequestMethod())) {
+					intercambio.getResponseHeaders().set("Allow", "GET");
+					intercambio.sendResponseHeaders(405, -1);
+					intercambio.close();
+					return;
+				}
+
+				String texto;
+
+				synchronized (logsWeb) {
+					texto = String.join("\n", logsWeb);
+				}
+
+				byte[] cuerpo = texto.getBytes(StandardCharsets.UTF_8);
+
+				intercambio.getResponseHeaders().set(
+						"Content-Type", "text/plain; charset=utf-8");
+
+				intercambio.getResponseHeaders().set(
+						"Cache-Control", "no-store");
+
+				intercambio.getResponseHeaders().set(
+						"X-Content-Type-Options", "nosniff");
+
+				intercambio.sendResponseHeaders(200, cuerpo.length);
+
+				try (var salida = intercambio.getResponseBody()) {
+					salida.write(cuerpo);
+				}
+			});
+
 			servidor.setExecutor(java.util.concurrent.Executors.newFixedThreadPool(4));
 			servidor.start();
 			System.out.println("Web de estado disponible en el puerto " + puertoWeb);
@@ -364,6 +406,27 @@ public class WM_Central {
 					font-size: 14px;
 					margin-top: 12px;
 				}
+
+				#estadoLogs {
+					color: #607580;
+					font-size: 13px;
+				}
+
+				#logsCentral {
+					height: 280px;
+					box-sizing: border-box;
+					overflow-y: auto;
+					overflow-x: hidden;
+					white-space: pre-wrap;
+					overflow-wrap: anywhere;
+					background: #10212b;
+					color: #dce9ef;
+					border: 1px solid #294350;
+					border-radius: 10px;
+					padding: 16px;
+					margin-bottom: 0;
+					font: 13px/1.6 Consolas, monospace;
+				}
 			</style>
 			</head>
 
@@ -411,6 +474,15 @@ public class WM_Central {
 				</section>
 
 				<div id="estaciones">Cargando...</div>
+				<section class="tarjeta">
+					<h2>Actividad de Central</h2>
+
+					<p id="estadoLogs">
+						Conectando con el registro...
+					</p>
+
+					<pre id="logsCentral">Esperando mensajes...</pre>
+				</section>
 			</main>
 
 			<script>
@@ -599,6 +671,49 @@ public class WM_Central {
 
 				cargar();
 				setInterval(cargar, 1000);
+
+				async function actualizarLogs() {
+					const ventana = document.getElementById('logsCentral');
+					const estado = document.getElementById('estadoLogs');
+
+					const seguir = ventana.scrollHeight
+						- ventana.scrollTop
+						- ventana.clientHeight < 40;
+
+					const posicion = ventana.scrollTop;
+
+					try {
+						const respuesta = await fetch('/api/logs', {
+							cache: 'no-store'
+						});
+
+						if (!respuesta.ok) {
+							throw new Error('HTTP ' + respuesta.status);
+						}
+
+						const texto = await respuesta.text();
+						const contenido = texto || 'Sin mensajes todavía.';
+
+						if (ventana.textContent !== contenido) {
+							ventana.textContent = contenido;
+
+							ventana.scrollTop = seguir
+								? ventana.scrollHeight
+								: posicion;
+						}
+
+						estado.textContent =
+							'Últimas 300 líneas · Actualización automática';
+
+					} catch {
+						estado.textContent =
+							'No se pudo actualizar. Se conservan los mensajes anteriores.';
+					}
+
+					setTimeout(actualizarLogs, 1500);
+				}
+
+				actualizarLogs();
 			</script>
 			</body>
 			</html>
@@ -650,12 +765,77 @@ public class WM_Central {
 		}
 	}
 
+	private static java.io.PrintStream copiarLogs(
+        java.io.PrintStream original) {
+
+		return new java.io.PrintStream(
+				new java.io.OutputStream() {
+
+					private final java.io.ByteArrayOutputStream linea =
+							new java.io.ByteArrayOutputStream();
+
+					private boolean truncada;
+
+					@Override
+					public synchronized void write(int dato) {
+						// La consola original sigue funcionando.
+						original.write(dato);
+
+						if (dato == '\n') {
+							String texto = linea.toString(
+									StandardCharsets.UTF_8).stripTrailing();
+
+							linea.reset();
+
+							if (truncada) {
+								texto += " [linea truncada]";
+								truncada = false;
+							}
+
+							// No llenar la ventana con heartbeats rutinarios.
+							if (!texto.isBlank()
+									&& !texto.contains("MONITOR_HEARTBEAT")
+									&& !texto.startsWith("SRV: Heartbeat de ")) {
+
+								String hora = java.time.LocalTime.now()
+										.withNano(0).toString();
+
+								synchronized (logsWeb) {
+									if (logsWeb.size() >= 300) {
+										logsWeb.removeFirst();
+									}
+
+									logsWeb.addLast(
+											"[" + hora + "] " + texto);
+								}
+							}
+
+						} else if (linea.size() < 8192) {
+							linea.write(dato);
+
+						} else {
+							truncada = true;
+						}
+					}
+
+					@Override
+					public void flush() {
+						original.flush();
+					}
+				},
+				true,
+				StandardCharsets.UTF_8);
+	}
+
 	/**
 	 * @param args
 	 */
 
 	public static void main(String[] args) {
-		
+		//Activo los logs
+		System.setOut(copiarLogs(System.out));
+		System.setErr(copiarLogs(System.err));
+
 		/*
 		* Descriptores de socket servidor y de socket con el cliente
 		*/
