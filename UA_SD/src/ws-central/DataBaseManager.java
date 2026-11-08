@@ -905,4 +905,35 @@ public class DataBaseManager {
             }
         }
     }
+    
+    public synchronized String listarRegistrosJson() throws SQLException {
+
+        var lista = new com.fasterxml.jackson.databind.ObjectMapper()
+                .createArrayNode();
+
+        String sql =
+                "SELECT 'Estacion / Monitor' AS tipo, "
+                + "station_id AS id, location_name AS nombre, active "
+                + "FROM stations "
+                + "UNION ALL "
+                + "SELECT 'Operario' AS tipo, "
+                + "operator_id AS id, full_name AS nombre, active "
+                + "FROM operators "
+                + "ORDER BY tipo, id";
+
+        try (PreparedStatement ps = conexion.prepareStatement(sql);
+            ResultSet rs = ps.executeQuery()) {
+
+            while (rs.next()) {
+                var registro = lista.addObject();
+
+                registro.put("tipo", rs.getString("tipo"));
+                registro.put("id", rs.getString("id"));
+                registro.put("nombre", rs.getString("nombre"));
+                registro.put("activo", rs.getInt("active") == 1);
+            }
+        }
+
+        return lista.toString();
+    }
 }

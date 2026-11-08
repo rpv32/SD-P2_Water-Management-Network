@@ -14,6 +14,7 @@ import org.apache.kafka.clients.producer.ProducerRecord;
 
 import java.util.UUID;
 import java.time.Instant;
+import java.sql.SQLException;
 
 public class WM_Central {
 
@@ -974,7 +975,39 @@ public class WM_Central {
                     respuesta = """
                     <!doctype html><html lang="es"><meta charset="utf-8"><title>Altas</title>
                     <style>body{font:16px system-ui;max-width:600px;margin:40px auto;padding:15px}
-                    label{display:block;margin:15px 0}input,select,button{padding:8px}</style>
+                    label{display:block;margin:15px 0}input,select,button{padding:8px}
+					.tabla-registros {
+						overflow-x: auto;
+						margin-top: 15px;
+					}
+
+					.tabla-registros table {
+						width: 100%;
+						border-collapse: collapse;
+					}
+
+					.tabla-registros th,
+					.tabla-registros td {
+						padding: 10px;
+						border-bottom: 1px solid #dce3e7;
+						text-align: left;
+						overflow-wrap: anywhere;
+					}
+
+					.tabla-registros th {
+						background: #eef3f5;
+					}
+
+					.registro-activo {
+						color: #187346;
+						font-weight: 600;
+					}
+
+					.registro-inactivo {
+						color: #a33a32;
+						font-weight: 600;
+					}
+					</style>
                     <h1>Alta de estaciones y operarios</h1>
                     <form method="post" action="/altas">
 					<label>Acción
@@ -988,9 +1021,117 @@ public class WM_Central {
                     <label>ID <input name="id" required maxlength="64" pattern="[A-Za-z0-9_-]+"></label>
                     <label>Ubicacion / nombre <input name="nombre" maxlength="200"></label>
                     <button>Aplicar</button></form>
+					<hr>
+					<h2>Estaciones y operarios registrados</h2>
+					<p>
+						Activo indica que el ID está habilitado en Central,
+						no que el proceso esté conectado.
+					</p>
+					<button type="button" id="botonRegistros" onclick="cargarRegistros()">
+						Listar / actualizar registros
+					</button>
+					<p id="estadoRegistros" role="status">
+						Pulsa el botón para consultar los registros.
+					</p>
+					<div class="tabla-registros">
+						<table>
+							<thead>
+								<tr>
+									<th>Tipo</th>
+									<th>ID</th>
+									<th>Ubicación / nombre</th>
+									<th>Alta administrativa</th>
+								</tr>
+							</thead>
+							<tbody id="filasRegistros">
+								<tr>
+									<td colspan="4">Sin consultar.</td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
                     <p id="resultado"></p><a href="/">Volver al panel</a>
-                    <script>if(location.search==='?ok')document.getElementById('resultado').textContent=
-                    'Operación completada correctamente.';</script></html>
+                    <script>
+						if(location.search==='?ok')document.getElementById('resultado').textContent='Operación completada correctamente.';
+						async function cargarRegistros() {
+							const boton = document.getElementById('botonRegistros');
+							const estado = document.getElementById('estadoRegistros');
+							const filas = document.getElementById('filasRegistros');
+
+							boton.disabled = true;
+							estado.textContent = 'Consultando registros...';
+
+							try {
+								const respuesta = await fetch('/api/registros', {
+									cache: 'no-store'
+								});
+
+								if (!respuesta.ok) {
+									throw new Error('HTTP ' + respuesta.status);
+								}
+
+								const registros = await respuesta.json();
+
+								if (!Array.isArray(registros)) {
+									throw new Error('Respuesta no válida');
+								}
+
+								const contenido = document.createDocumentFragment();
+
+								for (const registro of registros) {
+									const fila = document.createElement('tr');
+
+									for (const valor of [
+										registro.tipo,
+										registro.id,
+										registro.nombre
+									]) {
+										const celda = document.createElement('td');
+										celda.textContent = valor;
+										fila.appendChild(celda);
+									}
+
+									const activo = document.createElement('td');
+
+									activo.textContent = registro.activo
+										? 'Activo'
+										: 'Inactivo / dado de baja';
+
+									activo.className = registro.activo
+										? 'registro-activo'
+										: 'registro-inactivo';
+
+									fila.appendChild(activo);
+									contenido.appendChild(fila);
+								}
+
+								if (registros.length === 0) {
+									const fila = document.createElement('tr');
+									const celda = document.createElement('td');
+
+									celda.colSpan = 4;
+									celda.textContent = 'No hay registros.';
+
+									fila.appendChild(celda);
+									contenido.appendChild(fila);
+								}
+
+								// Sustituye las filas anteriores; no las duplica.
+								filas.replaceChildren(contenido);
+
+								estado.textContent =
+									'Actualizado: ' + new Date().toLocaleTimeString();
+
+							} catch {
+								estado.textContent =
+									'No se pudo actualizar. Los datos mostrados pueden estar desactualizados.';
+
+							} finally {
+								boton.disabled = false;
+							}
+						}
+					</script>
+					</html>
                     """;
                 } else if ("POST".equals(x.getRequestMethod())) {
                     String origen = x.getRequestHeaders().getFirst("Origin");
@@ -1057,5 +1198,53 @@ public class WM_Central {
             x.sendResponseHeaders(estado, bytes.length);
             try (var salida = x.getResponseBody()) { salida.write(bytes); }
         });
+
+		servidor.createContext("/api/registros", x -> {
+
+			if (!"/api/registros".equals(x.getRequestURI().getPath())) {
+				x.sendResponseHeaders(404, -1);
+				x.close();
+				return;
+			}
+
+			if (!"GET".equals(x.getRequestMethod())) {
+				x.getResponseHeaders().set("Allow", "GET");
+				x.sendResponseHeaders(405, -1);
+				x.close();
+				return;
+			}
+
+			int estado = 200;
+			String respuesta;
+
+			try {
+				respuesta = db.listarRegistrosJson();
+
+			} catch (SQLException e) {
+				estado = 503;
+				respuesta = "{\"message\":\"No se pudieron consultar los registros\"}";
+
+				System.err.println(
+						"Error al listar registros: " + e.getMessage());
+			}
+
+			byte[] bytes = respuesta.getBytes(StandardCharsets.UTF_8);
+
+			x.getResponseHeaders().set(
+					"Content-Type", "application/json; charset=utf-8");
+
+			x.getResponseHeaders().set(
+					"Cache-Control", "no-store");
+
+			x.getResponseHeaders().set(
+					"X-Content-Type-Options", "nosniff");
+
+			x.sendResponseHeaders(estado, bytes.length);
+
+			try (var salida = x.getResponseBody()) {
+				salida.write(bytes);
+			}
+		});
+
     }
 }
