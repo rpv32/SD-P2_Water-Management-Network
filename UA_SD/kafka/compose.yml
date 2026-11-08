@@ -60,7 +60,7 @@ services:
     tty: true
     depends_on:
       - monitor
-    entrypoint: ["java", "-Dorg.slf4j.simpleLogger.defaultLogLevel=warn", "-cp", "app.jar", "WM_Engine", "monitor-ws01", "6000", "WS-01", "broker:29092"]
+    entrypoint: ["java", "-Dorg.slf4j.simpleLogger.defaultLogLevel=warn", "-cp", "app.jar", "WM_WS_Engine", "monitor-ws01", "6000", "WS-01", "broker:29092"]
     volumes:
       - engine-ws01-data:/data
 

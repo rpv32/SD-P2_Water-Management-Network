@@ -4,7 +4,7 @@ $script:ComposeInstancias = Join-Path $PSScriptRoot "kafka\compose.instancias.ym
 function Inicializar-WM {
     param(
         [string]$Imagen = "watermanagement:practica-v1",
-        [string]$ClaseEngine = "WM_Engine",
+        [string]$ClaseEngine = "WM_WS_Engine",
         [string]$UrlCentral = "https://central-production-8c7f.up.railway.app",
         [string]$HostCentral = "switchyard.proxy.rlwy.net",
         [int]$PuertoCentral = 16591,
