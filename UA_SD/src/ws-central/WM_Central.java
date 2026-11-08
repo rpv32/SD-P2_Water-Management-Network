@@ -827,6 +827,16 @@ public class WM_Central {
 				StandardCharsets.UTF_8);
 	}
 
+	public static void notificarIncidencia( String stationId, String causa) throws Exception {
+
+		if (kafka == null) {
+			throw new IllegalStateException(
+					"El servicio Kafka de Central no esta iniciado");
+		}
+
+		kafka.notificarIncidencia(stationId, causa);
+	}
+
 	/**
 	 * @param args
 	 */

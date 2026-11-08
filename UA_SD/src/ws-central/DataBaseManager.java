@@ -876,4 +876,33 @@ public class DataBaseManager {
             throw e;
         }
     }
+
+    //Obtener operario del servicio activo de una estación
+    public record ServicioActivo(String requestId,String sessionId,String operatorId) {}
+
+    public synchronized ServicioActivo obtenerServicioActivo(String stationId) throws SQLException {
+
+        String sql =
+                "SELECT s.request_id, s.session_id, s.operator_id "
+                + "FROM station_runtime_state r "
+                + "JOIN watering_sessions s "
+                + "ON s.session_id = r.active_session_id "
+                + "WHERE r.station_id = ? "
+                + "AND s.status IN ('AUTHORIZED', 'RUNNING')";
+
+        try (PreparedStatement ps = conexion.prepareStatement(sql)) {
+            ps.setString(1, stationId);
+
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return null;
+                }
+
+                return new ServicioActivo(
+                        rs.getString("request_id"),
+                        rs.getString("session_id"),
+                        rs.getString("operator_id"));
+            }
+        }
+    }
 }

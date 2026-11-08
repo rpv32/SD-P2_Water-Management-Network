@@ -249,10 +249,18 @@ public class HiloWM extends Thread {
 								"Fecha no valida");
 						return respuesta;
 					}
+					try {
+						WM_Central.notificarIncidencia(stationId, campos[3]);
+					} catch (InterruptedException e) {
+						Thread.currentThread().interrupt();
 
-					System.out.println(
-							"SRV: Incidencia en " + stationId
-							+ ". Causa: " + campos[3]);
+						System.err.println("SRV: envio del aviso al operario interrumpido");
+
+					} catch (Exception e) {
+						System.err.println( "SRV: incidencia registrada, pero no se pudo " + "confirmar el aviso al operario: " + e.getMessage());
+					}
+
+					System.out.println( "SRV: Incidencia en " + stationId + ". Causa: " + campos[3]);
 
 					respuesta = "";
 				}

@@ -481,6 +481,51 @@ public class KafkaCentral extends Thread {
 		return resumen.toString();
 	}
 
+    public void notificarIncidencia( String stationId, String causa) throws Exception {
+
+        var servicio = db.obtenerServicioActivo(stationId);
+
+        // Si no había servicio, no hay un operario al que avisar.
+        if (servicio == null) {
+            return;
+        }
+
+        KafkaProducer<String, String> p = productorActivo;
+
+        if (p == null) {
+            throw new IllegalStateException(
+                    "Kafka de Central no esta preparado para enviar el aviso");
+        }
+
+        ObjectNode aviso = json.createObjectNode();
+
+        aviso.put("schemaVersion", 1);
+        aviso.put("eventId", UUID.randomUUID().toString());
+        aviso.put("eventType", "INCIDENT");
+        aviso.put("occurredAt", Instant.now().toString());
+
+        aviso.put("requestId", servicio.requestId());
+        aviso.put("sessionId", servicio.sessionId());
+        aviso.put("stationId", stationId);
+        aviso.put("operatorId", servicio.operatorId());
+        aviso.put("cause", causa);
+
+        aviso.put(
+                "message",
+                "Incidencia en la estacion " + stationId
+                + ": el Engine no responde o indica averia. "
+                + "El resumen final se enviara cuando este disponible.");
+
+        p.send(new ProducerRecord<>(
+                "wm.fo." + servicio.operatorId() + ".events",
+                servicio.sessionId(),
+                json.writeValueAsString(aviso))).get();
+
+        System.out.println(
+                "KAFKA: incidencia de " + stationId
+                + " notificada a " + servicio.operatorId());
+    }
+
     @Override
     public void run() {
         try (
