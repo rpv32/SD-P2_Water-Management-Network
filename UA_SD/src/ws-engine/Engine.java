@@ -132,6 +132,7 @@ public class Engine{
            synchronized(this) {
                 simularSegundo();
                 ComprobarTiempo();
+                guardarEstado();
             }
         }
     }
@@ -233,8 +234,8 @@ public class Engine{
                         try {
                             nuevoSocket.close();
                         } catch (IOException ignored) {
-                            throw e;
                         }
+                        throw e;
                     }
                 }
                     monitorConectado = true;
@@ -342,6 +343,7 @@ public class Engine{
                 }
 
                 sesionesEjecutadas.add(sessionId);
+                guardarEstado();
             }
         }
 
@@ -432,6 +434,7 @@ public class Engine{
             synchronized(this){
                 if(resultadoPendiente == resultado){
                     resultadoPendiente = null;
+                    guardarEstado();
                 }
             }
         }
@@ -637,6 +640,7 @@ public class Engine{
             OperatorId = "";
             RequestId = "";
             RiegoKafka = false;
+            guardarEstado();
         }
     }
 
@@ -649,17 +653,20 @@ public class Engine{
         } else {
             System.out.println("[ENGINE] Averia resuelta: el Engine responde OK");
         }
+        guardarEstado();
     }
 
     public synchronized void bloquear() {
         PararRiego("BLOCKED");
         Bloqueado = true;
         System.out.println("[ENGINE] Estacion FUERA DE SERVICIO");
+        guardarEstado();
     }
 
     public synchronized void activar() {
         Bloqueado = false;
         System.out.println("[ENGINE] Estacion activada");
+        guardarEstado();
     }
 
     private synchronized String estadoSalud() {
@@ -676,6 +683,162 @@ public class Engine{
         } else {
             return "";
         }
+    }
+
+    private synchronized void guardarEstado() {
+        try {
+            var directorio = java.nio.file.Path.of(
+                    System.getenv().getOrDefault("ENGINE_DATA_DIR", "/data"));
+
+            java.nio.file.Files.createDirectories(directorio);
+
+            var estado = json.createObjectNode();
+
+            estado.put("stationId", StationId);
+            estado.put("regando", Regando);
+            estado.put("sessionId", SessionId);
+            estado.put("requestId", RequestId);
+            estado.put("operatorId", OperatorId);
+            estado.put("duracionObjetivo", DuracionObjetivo);
+            estado.put("segundosRegados", SegundosRegados);
+            estado.put("caudal", Caudal);
+            estado.put("volumen", VolumenAcumulado);
+            estado.put("riegoKafka", RiegoKafka);
+            estado.put("bloqueado", Bloqueado);
+            estado.put("averiado", Averiado);
+
+            estado.set(
+                    "resultadoPendiente",
+                    resultadoPendiente == null
+                            ? json.nullNode()
+                            : resultadoPendiente.deepCopy());
+
+            var sesiones = estado.putArray("sesionesEjecutadas");
+
+            for (String id : sesionesEjecutadas) {
+                sesiones.add(id);
+            }
+
+            var destino = directorio.resolve(
+                    "engine-" + StationId + ".json");
+
+            var temporal = directorio.resolve(
+                    "engine-" + StationId + ".tmp");
+
+            byte[] contenido = json.writeValueAsBytes(estado);
+
+            try (var canal = java.nio.channels.FileChannel.open(
+                    temporal,
+                    java.nio.file.StandardOpenOption.CREATE,
+                    java.nio.file.StandardOpenOption.TRUNCATE_EXISTING,
+                    java.nio.file.StandardOpenOption.WRITE)) {
+
+                var buffer = java.nio.ByteBuffer.wrap(contenido);
+
+                while (buffer.hasRemaining()) {
+                    canal.write(buffer);
+                }
+
+                canal.force(true);
+            }
+
+            java.nio.file.Files.move(
+                    temporal,
+                    destino,
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+
+        } catch (Exception e) {
+            // No continuar suministrando si no podemos conservar el estado.
+            ValvulaAbierta = false;
+
+            System.err.println(
+                    "[ENGINE] No se pudo guardar el estado: "
+                    + e.getMessage());
+
+            System.exit(1);
+        }
+    }
+
+    private synchronized void recuperarEstado() throws IOException {
+        var archivo = java.nio.file.Path.of(
+                System.getenv().getOrDefault("ENGINE_DATA_DIR", "/data"))
+                .resolve("engine-" + StationId + ".json");
+
+        if (!java.nio.file.Files.exists(archivo)) {
+            return;
+        }
+
+        JsonNode estado = json.readTree(
+                java.nio.file.Files.readString(archivo));
+
+        if (estado == null
+                || !estado.isObject()
+                || !StationId.equals(estado.path("stationId").asText())) {
+
+            throw new IOException("Estado persistente no valido");
+        }
+
+        Regando = estado.path("regando").asBoolean();
+        SessionId = estado.path("sessionId").asText();
+        RequestId = estado.path("requestId").asText();
+        OperatorId = estado.path("operatorId").asText();
+        DuracionObjetivo = estado.path("duracionObjetivo").asInt();
+        SegundosRegados = estado.path("segundosRegados").asInt();
+        Caudal = estado.path("caudal").asDouble();
+        VolumenAcumulado = estado.path("volumen").asDouble();
+        RiegoKafka = estado.path("riegoKafka").asBoolean();
+        Bloqueado = estado.path("bloqueado").asBoolean();
+        Averiado = estado.path("averiado").asBoolean();
+
+        sesionesEjecutadas.clear();
+
+        for (JsonNode id : estado.path("sesionesEjecutadas")) {
+            sesionesEjecutadas.add(id.asText());
+        }
+
+        JsonNode pendiente = estado.get("resultadoPendiente");
+
+        if (pendiente != null && !pendiente.isNull()) {
+            if (!pendiente.isObject()) {
+                throw new IOException("Resultado persistente no valido");
+            }
+
+            resultadoPendiente = ((ObjectNode) pendiente).deepCopy();
+        }
+
+        ValvulaAbierta = false;
+
+        if (Regando) {
+            if (!RiegoKafka
+                    || SessionId.isBlank()
+                    || RequestId.isBlank()) {
+
+                throw new IOException(
+                        "La sesion recuperada no tiene identificadores validos");
+            }
+
+            sesionesEjecutadas.add(SessionId);
+
+            resultadoPendiente = crearResultado("ENGINE_KO");
+
+            Regando = false;
+            RiegoKafka = false;
+            Caudal = 0;
+            SessionId = "";
+            RequestId = "";
+            OperatorId = "";
+
+            System.out.println(
+                    "[ENGINE] Riego recuperado tras una caida. "
+                    + "Resultado interrumpido pendiente de envio.");
+
+            guardarEstado();
+        }
+
+        monitorConectado = false;
+
+        System.out.println("[ENGINE] Estado persistente recuperado.");
     }
 
 	public String leeSocket (Socket p_sk)
@@ -719,7 +882,8 @@ public class Engine{
             String BoostrapServer = args[3];
             Engine.StationId = stationId;
             Engine.hostMonitor = args[0];
-        Engine.puertoMonitor = PuertoMonitor;
+            Engine.puertoMonitor = PuertoMonitor;
+            Engine.recuperarEstado();
 
             Socket skSocket = new Socket(args[0], PuertoMonitor);
 
