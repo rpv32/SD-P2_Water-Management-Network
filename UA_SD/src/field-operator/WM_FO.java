@@ -218,7 +218,6 @@ public class WM_FO {
 
     /*
      * Interpreta el JSON y comprueba que el mensaje pertenece a este operario.
-     * Por ahora mostramos el evento completo para facilitar las pruebas.
      */
     private void mostrarEvento(String contenido) throws Exception {
         JsonNode evento = json.readTree(contenido);
@@ -716,8 +715,38 @@ public class WM_FO {
     private static String htmlWeb() {
         return """
         <!doctype html><html lang="es"><meta charset="utf-8"><title>Operario</title>
-        <style>body{font:16px system-ui;max-width:850px;margin:30px auto;padding:15px}
-        input,button{padding:8px;margin:5px}pre{background:#eee;padding:12px;white-space:pre-wrap;overflow-wrap:anywhere}</style>
+        <style>
+            body{
+                font:16px system-ui;
+                max-width:850px;
+                margin:30px auto;
+                padding:15px
+            }
+            input,button{
+                padding:8px;
+                margin:5px
+            }
+            pre{
+                background:#eee;
+                padding:12px;
+                white-space:pre-wrap;
+                overflow-wrap:anywhere
+            }
+            #eventos {
+                height: 320px;
+                box-sizing: border-box;
+                overflow-y: auto;
+                overflow-x: hidden;
+                white-space: pre-wrap;
+                overflow-wrap: anywhere;
+                background: #10212b;
+                color: #dce9ef;
+                border: 1px solid #294350;
+                border-radius: 10px;
+                padding: 16px;
+                font: 13px/1.6 Consolas, monospace;
+            }
+        </style>
         <h1>Operario</h1>
         <form method="post"><button name="accion" value="consultar">Consultar estaciones</button></form>
         <h2>Solicitar riego</h2><form method="post">
@@ -730,12 +759,39 @@ public class WM_FO {
         <input name="ruta" placeholder="/servicios/prueba.txt" required><button>Ejecutar</button></form>
         <h2>Mensajes del operario</h2><pre id="eventos">Conectando...</pre>
         <script>
-        async function actualizar(){
-          try{const r=await fetch('/eventos');if(!r.ok)throw Error();
-          document.getElementById('eventos').textContent=await r.text();}
-          catch{document.getElementById('eventos').textContent='No se pudo conectar con el FO'}
-          setTimeout(actualizar,1500);
-        }actualizar();
+            async function actualizar() {
+                const ventana = document.getElementById('eventos');
+
+                //Si estaba cerca del final, siguen los mensajes nuevos.
+                const seguir = ventana.scrollHeight - ventana.scrollTop - ventana.clientHeight < 40;
+
+                const posicion = ventana.scrollTop;
+
+                try {
+                    const respuesta = await fetch('/eventos', {cache: 'no-store'});
+
+                    if (!respuesta.ok) {
+                        throw new Error('No se pudieron consultar los mensajes');
+                    }
+
+                    const texto = await respuesta.text();
+
+                    if (ventana.textContent !== texto) {
+                        ventana.textContent = texto;
+
+                        ventana.scrollTop = seguir
+                            ? ventana.scrollHeight
+                            : posicion;
+                    }
+
+                } catch {
+                    // Conservamos los mensajes anteriores si falla una consulta.
+                    console.warn('No se pudo actualizar el registro del operario');
+                }
+
+                setTimeout(actualizar, 1500);
+            }
+            actualizar();
         </script></html>
         """;
     }
