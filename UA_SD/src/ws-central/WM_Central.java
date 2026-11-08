@@ -309,9 +309,7 @@ public class WM_Central {
 	}
 
 	private static String html() {
-		return 
-private static String htmlWeb() {
-    return """
+		return """
         <!doctype html>
         <html lang="es">
         <head>
