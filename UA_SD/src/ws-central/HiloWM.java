@@ -142,7 +142,9 @@ public class HiloWM extends Thread {
             return "ERROR##MALFORMED_MESSAGE#Mensaje no valido";
         }
 
-        System.out.println("SRV: El mensaje recibido es: " + campos[0]);
+        if (!"MONITOR_HEARTBEAT".equals(campos[0])) {
+			System.out.println("SRV: El mensaje recibido es: " + campos[0]);
+		}
 
         //Mensaje de registro.
         if(campos[0].compareTo("REGISTER") == 0){
@@ -205,7 +207,7 @@ public class HiloWM extends Thread {
 						return crearError(campos,"PERSISTENCE_ERROR","No se pudo registrar el heartbeat");
 					}
 
-                System.out.println("SRV: Heartbeat de " + stationId + ". Estado del Engine: " + campos[3]);
+                //System.out.println("SRV: Heartbeat de " + stationId + ". Estado del Engine: " + campos[3]);
                 //Heartbeat correcto no necesita respuesta.
                 respuesta = "";
             }
