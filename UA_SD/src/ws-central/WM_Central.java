@@ -841,7 +841,7 @@ public class WM_Central {
 							}
 
 							if (!db.registroActivo(tipo, id)) {
-								throw new IllegalArgumentException("El ID ya existe pero esta inactivo. " + "Dar de alta no lo reactiva");
+								throw new IllegalArgumentException("No se pudo confirmar el alta o la reactivacion");
 							}
 						}
                         x.getResponseHeaders().set("Location", "/altas?ok");

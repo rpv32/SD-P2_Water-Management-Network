@@ -769,8 +769,8 @@ public class DataBaseManager {
         try {
             comenzar();
 
-            update(
-                    "INSERT INTO stations (station_id, location_name, active, created_at, updated_at) VALUES (?, ?, 1, ?, ?) ON CONFLICT(station_id) DO NOTHING",stationId, ubicacion, t, t);
+            update("INSERT INTO stations " + "(station_id, location_name, active, created_at, updated_at) " + "VALUES (?, ?, 1, ?, ?) " + "ON CONFLICT(station_id) DO UPDATE SET "
+                    + "location_name = excluded.location_name, " + "active = 1, " + "updated_at = excluded.updated_at",stationId, ubicacion, t, t);
 
             update(
                     "INSERT OR IGNORE INTO station_runtime_state (station_id, visible_status, monitor_connected,engine_health, blocked, current_flow_lpm, current_volume_litres, last_status_change_at, updated_at) VALUES (?, 'DISCONNECTED', 0, 'UNKNOWN', 0, 0, 0, ?, ?)",stationId, t, t);
@@ -793,7 +793,8 @@ public class DataBaseManager {
 
         String t = ahora();
 
-        update("INSERT INTO operators (operator_id, full_name, active, created_at, updated_at) VALUES (?, ?, 1, ?, ?) ON CONFLICT(operator_id) DO NOTHING",operatorId, nombre, t, t);
+        update("INSERT INTO operators " + "(operator_id, full_name, active, created_at, updated_at) " + "VALUES (?, ?, 1, ?, ?) " + "ON CONFLICT(operator_id) DO UPDATE SET "
+                + "full_name = excluded.full_name, " + "active = 1, " + "updated_at = excluded.updated_at",operatorId, nombre, t, t);
     }
     
 
