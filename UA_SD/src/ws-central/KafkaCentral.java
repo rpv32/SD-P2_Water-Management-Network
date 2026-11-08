@@ -491,7 +491,7 @@ public class KafkaCentral extends Thread {
         ) {
             consumidor = cliente;
             productorActivo = productor;
-            cliente.subscribe(List.of("wm.watering.requests","wm.station.results","wm.station.telemetry","Wm.fo.queries"));
+            cliente.subscribe(List.of("wm.watering.requests","wm.station.results","wm.station.telemetry","wm.fo.queries"));
 
             System.out.println("KAFKA: consumidor de solicitudes iniciado");
 
