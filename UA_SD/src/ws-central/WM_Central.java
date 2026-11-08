@@ -309,416 +309,766 @@ public class WM_Central {
 	}
 
 	private static String html() {
-		return """
-			<!doctype html>
-			<html lang="es">
-			<head>
-			<meta charset="utf-8">
-			<meta name="viewport" content="width=device-width, initial-scale=1">
-			<title>Water Management Network</title>
-
-			<style>
-				body {
-					font-family: Arial, sans-serif;
-					margin: 0;
-					background: #f3f6f8;
-					color: #17272f;
-				}
-
-				header {
-					background: #0f4c5c;
-					color: white;
-					padding: 24px;
-				}
-
-				main { padding: 24px; }
-
-				.tarjeta, .controles {
-					background: white;
-					border-radius: 10px;
-					padding: 16px;
-					margin-bottom: 16px;
-					box-shadow: 0 2px 6px rgba(0,0,0,.08);
-				}
-
-				.estado {
-					display: inline-block;
-					padding: 5px 12px;
-					border-radius: 999px;
-					font-size: 13px;
-					font-weight: bold;
-				}
-
-				.AVAILABLE { background: #d1f2df; color: #12653a; }
-
-				.WATERING {
-					background: #d1f2df;
-					color: #12653a;
-					animation: regando 1s infinite alternate;
-				}
-
-				@keyframes regando {
-					from { opacity: 1; }
-					to { opacity: .45; }
-				}
-
-				.LEAK { background: #ffe0e0; color: #8a1c1c; }
-				.DISCONNECTED { background: #e8e8e8; color: #555; }
-				.OUT_OF_SERVICE { background: #ffe0b2; color: #7a3e00; }
-
-				label {
-					display: inline-block;
-					margin: 8px 16px 8px 0;
-				}
-
-				input {
-					padding: 8px;
-					border: 1px solid #bbc9cf;
-					border-radius: 6px;
-					width: 110px;
-				}
-
-				button {
-					border: 0;
-					border-radius: 6px;
-					padding: 10px 14px;
-					margin: 5px 5px 0 0;
-					cursor: pointer;
-					background: #0f4c5c;
-					color: white;
-				}
-
-				button.bloquear { background: #a64b00; }
-				button.activar { background: #187346; }
-
-				button:disabled {
-					opacity: .5;
-					cursor: not-allowed;
-				}
-
-				#mensaje {
-					white-space: pre-wrap;
-					padding: 12px;
-					border-radius: 6px;
-					background: #e7eef2;
-				}
-
-				#conexion {
-					font-size: 14px;
-					margin-top: 12px;
-				}
-
-				#estadoLogs {
-					color: #607580;
-					font-size: 13px;
-				}
-
-				#logsCentral {
-					height: 280px;
-					box-sizing: border-box;
-					overflow-y: auto;
-					overflow-x: hidden;
-					white-space: pre-wrap;
-					overflow-wrap: anywhere;
-					background: #10212b;
-					color: #dce9ef;
-					border: 1px solid #294350;
-					border-radius: 10px;
-					padding: 16px;
-					margin-bottom: 0;
-					font: 13px/1.6 Consolas, monospace;
-				}
-			</style>
-			</head>
-
-			<body>
-			<header>
-				<h1>Water Management Network</h1>
-				<p>Monitorizacion y control de las estaciones</p>
-			</header>
-
-			<main>
-				<section class="controles">
-					<h2>Control de Central</h2>
-
-					<label>
-						Operario:
-						<input id="operario" value="OP-01">
-					</label>
-
-					<label>
-						Duracion (s):
-						<input id="duracion" type="number"
-							min="1" step="1" value="30">
-					</label>
-
-					<p>Estos datos se utilizan para iniciar los riegos.</p>
-
-					<div>
-						<button data-action="START" data-station="*">
-							Iniciar en todas
-						</button>
-
-						<button class="bloquear"
-								data-action="BLOCK" data-station="*">
-							Bloquear todas
-						</button>
-
-						<button class="activar"
-								data-action="ACTIVATE" data-station="*">
-							Activar todas
-						</button>
-					</div>
-
-					<p id="mensaje" role="status">Sin acciones pendientes.</p>
-					<p id="conexion">Conectando con Central...</p>
-				</section>
-
-				<div id="estaciones">Cargando...</div>
-				<section class="tarjeta">
-					<h2>Actividad de Central</h2>
-
-					<p id="estadoLogs">
-						Conectando con el registro...
-					</p>
-
-					<pre id="logsCentral">Esperando mensajes...</pre>
-				</section>
-			</main>
-
-			<script>
-				let enviando = false;
-				let cargando = false;
-
-				const nombres = {
-					AVAILABLE: 'Disponible',
-					WATERING: 'Regando',
-					LEAK: 'Fuga / Averiada',
-					OUT_OF_SERVICE: 'Fuera de servicio',
-					DISCONNECTED: 'Desconectada'
-				};
-
-				function escapar(valor) {
-					const elemento = document.createElement('span');
-					elemento.textContent = String(valor ?? '');
-					return elemento.innerHTML
-						.replaceAll('"', '&quot;')
-						.replaceAll("'", '&#39;');
-				}
-
-				function numero(valor) {
-					const n = Number(valor);
-					return Number.isFinite(n) ? n.toFixed(2) : '0.00';
-				}
-
-				async function cargar() {
-					if (cargando) return;
-					cargando = true;
-
-					try {
-						const respuesta = await fetch('/api/stations', {
-							cache: 'no-store'
-						});
-
-						if (!respuesta.ok) {
-							throw new Error('HTTP ' + respuesta.status);
-						}
-
-						const estaciones = await respuesta.json();
-						const contenedor = document.getElementById('estaciones');
-
-						contenedor.innerHTML = estaciones.length === 0
-							? '<div class="tarjeta">No hay estaciones registradas.</div>'
-							: estaciones.map(e => {
-								const estado = Object.hasOwn(nombres, e.status)
-									? e.status : 'DISCONNECTED';
-
-								return `
-									<section class="tarjeta">
-										<h2>${escapar(e.stationId)}</h2>
-										<p>${escapar(e.location)}</p>
-
-										<span class="estado ${estado}">
-											${nombres[estado]}
-										</span>
-
-										<p>
-											Engine: ${escapar(e.engineHealth)} |
-											Monitor: ${e.monitorConnected
-												? 'conectado' : 'desconectado'}
-										</p>
-
-										<p>Operario: ${escapar(e.operatorId || '—')}</p>
-
-										<p>
-											Caudal: ${numero(e.flow)} L/min |
-											Volumen: ${numero(e.volume)} L
-										</p>
-
-										<button data-action="START"
-												data-station="${escapar(e.stationId)}"
-												${enviando || estado !== 'AVAILABLE'
-													? 'disabled' : ''}>
-											Iniciar riego
-										</button>
-
-										<button class="bloquear"
-												data-action="BLOCK"
-												data-station="${escapar(e.stationId)}"
-												${enviando ? 'disabled' : ''}>
-											Bloquear
-										</button>
-
-										<button class="activar"
-												data-action="ACTIVATE"
-												data-station="${escapar(e.stationId)}"
-												${enviando ? 'disabled' : ''}>
-											Activar
-										</button>
-									</section>
-								`;
-							}).join('');
-
-						document.getElementById('conexion').textContent =
-							'Estado actualizado: ' + new Date().toLocaleTimeString();
-
-					} catch (error) {
-						document.getElementById('conexion').textContent =
-							'Sin conexion con Central: ' + error.message;
-
-					} finally {
-						cargando = false;
-					}
-				}
-
-				async function ejecutar(accion, estacion) {
-					if (enviando) return;
-
-					const operario =
-						document.getElementById('operario').value.trim();
-
-					const duracion =
-						Number(document.getElementById('duracion').value);
-
-					const mensaje = document.getElementById('mensaje');
-
-					if (accion === 'START'
-						&& (!operario || !Number.isInteger(duracion)
-							|| duracion <= 0)) {
-
-						mensaje.textContent =
-							'Indica un operario y una duracion entera positiva.';
-						return;
-					}
-
-					const destino = estacion === '*'
-						? 'todas las estaciones' : estacion;
-
-					if (!confirm('Ejecutar ' + accion + ' sobre ' + destino + '?')) {
-						return;
-					}
-
-					enviando = true;
-					document.querySelectorAll('button[data-action]')
-						.forEach(b => b.disabled = true);
-
-					mensaje.textContent = 'Enviando accion...';
-
-					try {
-						const respuesta = await fetch('/api/action', {
-							method: 'POST',
-							headers: {
-								'Content-Type': 'application/json'
-							},
-							body: JSON.stringify({
-								action: accion,
-								stationId: estacion,
-								operatorId: operario,
-								durationSeconds: duracion
-							})
-						});
-
-						const resultado = await respuesta.json();
-
-						if (!respuesta.ok) {
-							throw new Error(resultado.message || 'Error HTTP');
-						}
-
-						mensaje.textContent = resultado.message;
-
-					} catch (error) {
-						mensaje.textContent =
-							'No se pudo confirmar la accion: ' + error.message
-							+ '. Comprueba el estado antes de repetirla.';
-
-					} finally {
-						enviando = false;
-
-						document.querySelectorAll(
-							'.controles button[data-action]'
-						).forEach(b => b.disabled = false);
-
-						await cargar();
-					}
-				}
-
-				document.addEventListener('click', evento => {
-					const boton = evento.target.closest('button[data-action]');
-
-					if (boton && !boton.disabled) {
-						ejecutar(boton.dataset.action, boton.dataset.station);
-					}
-				});
-
-				cargar();
-				setInterval(cargar, 1000);
-
-				async function actualizarLogs() {
-					const ventana = document.getElementById('logsCentral');
-					const estado = document.getElementById('estadoLogs');
-
-					const seguir = ventana.scrollHeight
-						- ventana.scrollTop
-						- ventana.clientHeight < 40;
-
-					const posicion = ventana.scrollTop;
-
-					try {
-						const respuesta = await fetch('/api/logs', {
-							cache: 'no-store'
-						});
-
-						if (!respuesta.ok) {
-							throw new Error('HTTP ' + respuesta.status);
-						}
-
-						const texto = await respuesta.text();
-						const contenido = texto || 'Sin mensajes todavía.';
-
-						if (ventana.textContent !== contenido) {
-							ventana.textContent = contenido;
-
-							ventana.scrollTop = seguir
-								? ventana.scrollHeight
-								: posicion;
-						}
-
-						estado.textContent =
-							'Últimas 300 líneas · Actualización automática';
-
-					} catch {
-						estado.textContent =
-							'No se pudo actualizar. Se conservan los mensajes anteriores.';
-					}
-
-					setTimeout(actualizarLogs, 1500);
-				}
-
-				actualizarLogs();
-			</script>
-			</body>
-			</html>
-			""";
+		return 
+private static String htmlWeb() {
+    return """
+        <!doctype html>
+        <html lang="es">
+        <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Water Management Network</title>
+
+        <style>
+            * {
+                box-sizing: border-box;
+            }
+
+            body {
+                font-family: Arial, sans-serif;
+                margin: 0;
+                background: #101923;
+                color: #e8f0f5;
+            }
+
+            header {
+                background: linear-gradient(135deg, #172b3a, #203d50);
+                color: white;
+                padding: 25px 30px;
+                border-bottom: 1px solid #304858;
+            }
+
+            header h1 {
+                margin: 0;
+                font-size: 25px;
+                letter-spacing: .5px;
+            }
+
+            header p {
+                margin: 8px 0 0;
+                color: #a8bdca;
+                font-size: 14px;
+            }
+
+            main {
+                max-width: 1250px;
+                margin: auto;
+                padding: 25px;
+            }
+
+            h2 {
+                margin: 0 0 18px;
+                font-size: 19px;
+                color: #edf5fa;
+            }
+
+            .tarjeta, .controles {
+                background: #192633;
+                border: 1px solid #2b3d4b;
+                border-radius: 14px;
+                padding: 20px;
+                margin-bottom: 18px;
+                box-shadow: 0 5px 18px rgba(0,0,0,.16);
+            }
+
+            .controles {
+                border-top: 3px solid #36a9c8;
+            }
+
+            .cabecera-seccion {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 12px;
+                flex-wrap: wrap;
+            }
+
+            .etiqueta-seccion {
+                color: #6fc7e2;
+                font-size: 11px;
+                font-weight: bold;
+                letter-spacing: 1px;
+                background: #203b4b;
+                padding: 6px 10px;
+                border-radius: 20px;
+            }
+
+            label {
+                display: inline-flex;
+                flex-direction: column;
+                gap: 7px;
+                margin: 5px 18px 12px 0;
+                color: #a9bdc9;
+                font-size: 13px;
+                font-weight: bold;
+            }
+
+            input {
+                width: 180px;
+                max-width: 100%;
+                padding: 11px 12px;
+                border: 1px solid #3a5262;
+                border-radius: 8px;
+                background: #101923;
+                color: #edf5fa;
+                font-size: 14px;
+                outline: none;
+            }
+
+            input:focus {
+                border-color: #36a9c8;
+                box-shadow: 0 0 0 2px rgba(54,169,200,.15);
+            }
+
+            .ayuda {
+                color: #91a6b4;
+                font-size: 13px;
+                margin: 3px 0 16px;
+            }
+
+            button {
+                border: 0;
+                border-radius: 8px;
+                padding: 10px 15px;
+                margin: 5px 5px 0 0;
+                cursor: pointer;
+                background: #167b59;
+                color: white;
+                font-size: 13px;
+                font-weight: bold;
+                transition: filter .2s, transform .2s;
+            }
+
+            button:hover:not(:disabled) {
+                filter: brightness(1.15);
+                transform: translateY(-1px);
+            }
+
+            button.bloquear {
+                background: #a64b28;
+            }
+
+            button.activar {
+                background: #28658c;
+            }
+
+            button:disabled {
+                opacity: .4;
+                cursor: not-allowed;
+                transform: none;
+            }
+
+            .acciones-globales {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 7px;
+                margin-bottom: 17px;
+            }
+
+            .acciones-globales button {
+                padding: 12px 17px;
+            }
+
+            #mensaje {
+                white-space: pre-wrap;
+                padding: 12px 14px;
+                border-radius: 8px;
+                background: #101923;
+                border: 1px solid #304554;
+                color: #43d49a;
+                font-size: 13px;
+                margin: 14px 0 8px;
+            }
+
+            #conexion {
+                font-size: 12px;
+                color: #91a6b4;
+                margin: 8px 0 0;
+            }
+
+            .estaciones-titulo {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 10px;
+                margin: 25px 0 15px;
+            }
+
+            .estaciones-titulo h2 {
+                margin: 0;
+            }
+
+            .actualizacion {
+                color: #91a6b4;
+                font-size: 11px;
+                letter-spacing: .5px;
+            }
+
+            #estaciones {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+                gap: 16px;
+            }
+
+            #estaciones .tarjeta {
+                margin: 0;
+                min-width: 0;
+            }
+
+            #estaciones .tarjeta h2 {
+                margin-bottom: 7px;
+                font-size: 20px;
+            }
+
+            #estaciones .tarjeta p {
+                color: #a9bdc9;
+                font-size: 13px;
+                line-height: 1.5;
+                overflow-wrap: anywhere;
+            }
+
+            .estado {
+                display: inline-block;
+                padding: 6px 12px;
+                border-radius: 999px;
+                font-size: 11px;
+                font-weight: bold;
+                letter-spacing: .4px;
+                margin: 8px 0;
+            }
+
+            /* Estación disponible: verde */
+            .AVAILABLE {
+                background: #d1f2df;
+                color: #12653a;
+            }
+
+            /* Estación regando: verde intermitente */
+            .WATERING {
+                background: #d1f2df;
+                color: #12653a;
+                animation: regando 1s infinite alternate;
+            }
+
+            @keyframes regando {
+                from { opacity: 1; }
+                to { opacity: .45; }
+            }
+
+            /* Fuga o avería: rojo */
+            .LEAK {
+                background: #ffe0e0;
+                color: #8a1c1c;
+            }
+
+            /* Desconectada: gris */
+            .DISCONNECTED {
+                background: #e1e5e8;
+                color: #505b63;
+            }
+
+            /* Fuera de servicio: naranja */
+            .OUT_OF_SERVICE {
+                background: #ffe0b2;
+                color: #7a3e00;
+            }
+
+            .datos-estacion {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 10px;
+                margin: 15px 0;
+            }
+
+            .dato {
+                background: #101923;
+                border: 1px solid #293d4b;
+                border-radius: 9px;
+                padding: 11px;
+                min-width: 0;
+            }
+
+            .dato-titulo {
+                display: block;
+                color: #8fa6b5;
+                font-size: 10px;
+                font-weight: bold;
+                letter-spacing: .7px;
+                margin-bottom: 7px;
+            }
+
+            .dato-valor {
+                color: #edf5fa;
+                font-size: 18px;
+                font-weight: bold;
+                overflow-wrap: anywhere;
+            }
+
+            .unidad {
+                color: #91a6b4;
+                font-size: 11px;
+                font-weight: normal;
+            }
+
+            .acciones-estacion {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 5px;
+                margin-top: 12px;
+            }
+
+            .acciones-estacion button {
+                flex: 1;
+                min-width: 90px;
+            }
+
+            .logs-cabecera {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 10px;
+            }
+
+            #estadoLogs {
+                color: #91a6b4;
+                font-size: 12px;
+                margin: 0 0 12px;
+            }
+
+            #logsCentral {
+                height: 280px;
+                overflow-y: auto;
+                overflow-x: hidden;
+                white-space: pre-wrap;
+                overflow-wrap: anywhere;
+                background: #0b1219;
+                color: #dce9ef;
+                border: 1px solid #2b414f;
+                border-radius: 10px;
+                padding: 16px;
+                margin: 0;
+                font: 13px/1.6 Consolas, monospace;
+            }
+
+            @media (max-width: 600px) {
+                header {
+                    padding: 22px 18px;
+                }
+
+                header h1 {
+                    font-size: 21px;
+                }
+
+                main {
+                    padding: 15px;
+                }
+
+                .tarjeta, .controles {
+                    padding: 16px;
+                }
+
+                label {
+                    display: flex;
+                    margin-right: 0;
+                }
+
+                input {
+                    width: 100%;
+                }
+
+                .acciones-globales {
+                    flex-direction: column;
+                }
+
+                .acciones-globales button {
+                    width: 100%;
+                    margin-right: 0;
+                }
+
+                #estaciones {
+                    grid-template-columns: 1fr;
+                }
+
+                #logsCentral {
+                    height: 240px;
+                    font-size: 12px;
+                }
+            }
+        </style>
+        </head>
+
+        <body>
+
+        <header>
+            <h1>Water Management Network</h1>
+            <p>Monitorización y control de las estaciones</p>
+        </header>
+
+        <main>
+
+            <section class="controles">
+                <div class="cabecera-seccion">
+                    <h2>Control de Central</h2>
+                    <span class="etiqueta-seccion">CONTROL GLOBAL</span>
+                </div>
+
+                <label>
+                    Operario
+                    <input id="operario" value="OP-01">
+                </label>
+
+                <label>
+                    Duración (segundos)
+                    <input id="duracion" type="number"
+                           min="1" step="1" value="30">
+                </label>
+
+                <p class="ayuda">
+                    Estos datos se utilizan para iniciar los riegos.
+                </p>
+
+                <div class="acciones-globales">
+                    <button data-action="START" data-station="*">
+                        ▶ Iniciar en todas
+                    </button>
+
+                    <button class="bloquear"
+                            data-action="BLOCK" data-station="*">
+                        Bloquear todas
+                    </button>
+
+                    <button class="activar"
+                            data-action="ACTIVATE" data-station="*">
+                        Activar todas
+                    </button>
+                </div>
+
+                <p id="mensaje" role="status">
+                    Sin acciones pendientes.
+                </p>
+
+                <p id="conexion">Conectando con Central...</p>
+            </section>
+
+            <div class="estaciones-titulo">
+                <h2>Estaciones de la red</h2>
+                <span class="actualizacion">
+                    ACTUALIZACIÓN AUTOMÁTICA
+                </span>
+            </div>
+
+            <div id="estaciones">Cargando estaciones...</div>
+
+            <section class="tarjeta">
+                <div class="logs-cabecera">
+                    <h2>Actividad de Central</h2>
+                    <span class="etiqueta-seccion">REGISTRO</span>
+                </div>
+
+                <p id="estadoLogs">
+                    Conectando con el registro...
+                </p>
+
+                <pre id="logsCentral">Esperando mensajes...</pre>
+            </section>
+
+        </main>
+
+        <script>
+            let enviando = false;
+            let cargando = false;
+
+            const nombres = {
+                AVAILABLE: 'Disponible',
+                WATERING: 'Regando',
+                LEAK: 'Fuga / Averiada',
+                OUT_OF_SERVICE: 'Fuera de servicio',
+                DISCONNECTED: 'Desconectada'
+            };
+
+            function escapar(valor) {
+                const elemento = document.createElement('span');
+                elemento.textContent = String(valor ?? '');
+
+                return elemento.innerHTML
+                    .replaceAll('"', '&quot;')
+                    .replaceAll("'", '&#39;');
+            }
+
+            function numero(valor) {
+                const n = Number(valor);
+                return Number.isFinite(n) ? n.toFixed(2) : '0.00';
+            }
+
+            async function cargar() {
+                if (cargando) return;
+
+                cargando = true;
+
+                try {
+                    const respuesta = await fetch('/api/stations', {
+                        cache: 'no-store'
+                    });
+
+                    if (!respuesta.ok) {
+                        throw new Error('HTTP ' + respuesta.status);
+                    }
+
+                    const estaciones = await respuesta.json();
+                    const contenedor =
+                        document.getElementById('estaciones');
+
+                    contenedor.innerHTML = estaciones.length === 0
+                        ? '<div class="tarjeta">No hay estaciones registradas.</div>'
+                        : estaciones.map(e => {
+
+                            const estado = Object.hasOwn(nombres, e.status)
+                                ? e.status
+                                : 'DISCONNECTED';
+
+                            return `
+                                <section class="tarjeta">
+
+                                    <div class="cabecera-seccion">
+                                        <h2>${escapar(e.stationId)}</h2>
+
+                                        <span class="estado ${estado}">
+                                            ${nombres[estado]}
+                                        </span>
+                                    </div>
+
+                                    <p>${escapar(e.location)}</p>
+
+                                    <div class="datos-estacion">
+                                        <div class="dato">
+                                            <span class="dato-titulo">
+                                                CAUDAL
+                                            </span>
+                                            <span class="dato-valor">
+                                                ${numero(e.flow)}
+                                                <span class="unidad">L/min</span>
+                                            </span>
+                                        </div>
+
+                                        <div class="dato">
+                                            <span class="dato-titulo">
+                                                VOLUMEN
+                                            </span>
+                                            <span class="dato-valor">
+                                                ${numero(e.volume)}
+                                                <span class="unidad">L</span>
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <p>
+                                        Motor: ${escapar(e.engineHealth)} |
+                                        Monitor: ${e.monitorConnected
+                                            ? 'conectado'
+                                            : 'desconectado'}
+                                    </p>
+
+                                    <p>
+                                        Operario:
+                                        ${escapar(e.operatorId || '—')}
+                                    </p>
+
+                                    <div class="acciones-estacion">
+
+                                        <button
+                                            data-action="START"
+                                            data-station="${escapar(e.stationId)}"
+                                            ${enviando || estado !== 'AVAILABLE'
+                                                ? 'disabled'
+                                                : ''}>
+                                            ▶ Iniciar riego
+                                        </button>
+
+                                        <button
+                                            class="bloquear"
+                                            data-action="BLOCK"
+                                            data-station="${escapar(e.stationId)}"
+                                            ${enviando ? 'disabled' : ''}>
+                                            Bloquear
+                                        </button>
+
+                                        <button
+                                            class="activar"
+                                            data-action="ACTIVATE"
+                                            data-station="${escapar(e.stationId)}"
+                                            ${enviando ? 'disabled' : ''}>
+                                            Activar
+                                        </button>
+
+                                    </div>
+                                </section>
+                            `;
+                        }).join('');
+
+                    document.getElementById('conexion').textContent =
+                        'Estado actualizado: ' +
+                        new Date().toLocaleTimeString();
+
+                } catch (error) {
+                    document.getElementById('conexion').textContent =
+                        'Sin conexión con Central: ' + error.message;
+
+                } finally {
+                    cargando = false;
+                }
+            }
+
+            async function ejecutar(accion, estacion) {
+                if (enviando) return;
+
+                const operario =
+                    document.getElementById('operario').value.trim();
+
+                const duracion =
+                    Number(document.getElementById('duracion').value);
+
+                const mensaje =
+                    document.getElementById('mensaje');
+
+                if (accion === 'START'
+                    && (!operario
+                        || !Number.isInteger(duracion)
+                        || duracion <= 0)) {
+
+                    mensaje.textContent =
+                        'Indica un operario y una duración entera positiva.';
+
+                    return;
+                }
+
+                const destino = estacion === '*'
+                    ? 'todas las estaciones'
+                    : estacion;
+
+                if (!confirm(
+                    '¿Ejecutar ' + accion + ' sobre ' + destino + '?'
+                )) {
+                    return;
+                }
+
+                enviando = true;
+
+                document.querySelectorAll('button[data-action]')
+                    .forEach(b => b.disabled = true);
+
+                mensaje.textContent = 'Enviando acción...';
+
+                try {
+                    const respuesta = await fetch('/api/action', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            action: accion,
+                            stationId: estacion,
+                            operatorId: operario,
+                            durationSeconds: duracion
+                        })
+                    });
+
+                    const resultado = await respuesta.json();
+
+                    if (!respuesta.ok) {
+                        throw new Error(
+                            resultado.message || 'Error HTTP'
+                        );
+                    }
+
+                    mensaje.textContent = resultado.message;
+
+                } catch (error) {
+                    mensaje.textContent =
+                        'No se pudo confirmar la acción: ' +
+                        error.message +
+                        '. Comprueba el estado antes de repetirla.';
+
+                } finally {
+                    enviando = false;
+
+                    document.querySelectorAll(
+                        '.controles button[data-action]'
+                    ).forEach(b => b.disabled = false);
+
+                    await cargar();
+                }
+            }
+
+            document.addEventListener('click', evento => {
+                const boton = evento.target.closest(
+                    'button[data-action]'
+                );
+
+                if (boton && !boton.disabled) {
+                    ejecutar(
+                        boton.dataset.action,
+                        boton.dataset.station
+                    );
+                }
+            });
+
+            cargar();
+            setInterval(cargar, 1000);
+
+            async function actualizarLogs() {
+                const ventana =
+                    document.getElementById('logsCentral');
+
+                const estado =
+                    document.getElementById('estadoLogs');
+
+                const seguir = ventana.scrollHeight
+                    - ventana.scrollTop
+                    - ventana.clientHeight < 40;
+
+                const posicion = ventana.scrollTop;
+
+                try {
+                    const respuesta = await fetch('/api/logs', {
+                        cache: 'no-store'
+                    });
+
+                    if (!respuesta.ok) {
+                        throw new Error('HTTP ' + respuesta.status);
+                    }
+
+                    const texto = await respuesta.text();
+
+                    const contenido =
+                        texto || 'Sin mensajes todavía.';
+
+                    if (ventana.textContent !== contenido) {
+                        ventana.textContent = contenido;
+
+                        ventana.scrollTop = seguir
+                            ? ventana.scrollHeight
+                            : posicion;
+                    }
+
+                    estado.textContent =
+                        'Últimas 300 líneas · Actualización automática';
+
+                } catch {
+                    estado.textContent =
+                        'No se pudo actualizar. Se conservan los mensajes anteriores.';
+                }
+
+                setTimeout(actualizarLogs, 1500);
+            }
+
+            actualizarLogs();
+        </script>
+
+        </body>
+        </html>
+        """;
 	}
 
 	private static java.util.List<String> estacionesObjetivo(String objetivo) throws Exception {
@@ -973,166 +1323,641 @@ public class WM_Central {
                     estado = 404; respuesta = "Ruta no encontrada";
                 } else if ("GET".equals(x.getRequestMethod())) {
                     respuesta = """
-                    <!doctype html><html lang="es"><meta charset="utf-8"><title>Altas</title>
-                    <style>body{font:16px system-ui;max-width:600px;margin:40px auto;padding:15px}
-                    label{display:block;margin:15px 0}input,select,button{padding:8px}
-					.tabla-registros {
-						overflow-x: auto;
-						margin-top: 15px;
-					}
+							<!DOCTYPE html>
+							<html lang="es">
+							<head>
+								<meta charset="UTF-8">
+								<meta name="viewport" content="width=device-width, initial-scale=1.0">
+								<meta name="theme-color" content="#101923">
+								<title>Gestión | Altas y Bajas</title>
 
-					.tabla-registros table {
-						width: 100%;
-						border-collapse: collapse;
-					}
-
-					.tabla-registros th,
-					.tabla-registros td {
-						padding: 10px;
-						border-bottom: 1px solid #dce3e7;
-						text-align: left;
-						overflow-wrap: anywhere;
-					}
-
-					.tabla-registros th {
-						background: #eef3f5;
-					}
-
-					.registro-activo {
-						color: #187346;
-						font-weight: 600;
-					}
-
-					.registro-inactivo {
-						color: #a33a32;
-						font-weight: 600;
-					}
-					</style>
-                    <h1>Alta de estaciones y operarios</h1>
-                    <form method="post" action="/altas">
-					<label>Acción
-						<select name="accion">
-							<option value="alta">Dar de alta</option>
-							<option value="baja">Dar de baja</option>
-						</select>
-					</label>
-                    <label>Tipo <select name="tipo"><option value="station">Estacion</option>
-                    <option value="operator">Operario</option></select></label>
-                    <label>ID <input name="id" required maxlength="64" pattern="[A-Za-z0-9_-]+"></label>
-                    <label>Ubicacion / nombre <input name="nombre" maxlength="200"></label>
-                    <button>Aplicar</button></form>
-					<hr>
-					<h2>Estaciones y operarios registrados</h2>
-					<p>
-						Activo indica que el ID está habilitado en Central,
-						no que el proceso esté conectado.
-					</p>
-					<button type="button" id="botonRegistros" onclick="cargarRegistros()">
-						Listar / actualizar registros
-					</button>
-					<p id="estadoRegistros" role="status">
-						Pulsa el botón para consultar los registros.
-					</p>
-					<div class="tabla-registros">
-						<table>
-							<thead>
-								<tr>
-									<th>Tipo</th>
-									<th>ID</th>
-									<th>Ubicación / nombre</th>
-									<th>Alta administrativa</th>
-								</tr>
-							</thead>
-							<tbody id="filasRegistros">
-								<tr>
-									<td colspan="4">Sin consultar.</td>
-								</tr>
-							</tbody>
-						</table>
-					</div>
-                    <p id="resultado"></p><a href="/">Volver al panel</a>
-                    <script>
-						if(location.search==='?ok')document.getElementById('resultado').textContent='Operación completada correctamente.';
-						async function cargarRegistros() {
-							const boton = document.getElementById('botonRegistros');
-							const estado = document.getElementById('estadoRegistros');
-							const filas = document.getElementById('filasRegistros');
-
-							boton.disabled = true;
-							estado.textContent = 'Consultando registros...';
-
-							try {
-								const respuesta = await fetch('/api/registros', {
-									cache: 'no-store'
-								});
-
-								if (!respuesta.ok) {
-									throw new Error('HTTP ' + respuesta.status);
-								}
-
-								const registros = await respuesta.json();
-
-								if (!Array.isArray(registros)) {
-									throw new Error('Respuesta no válida');
-								}
-
-								const contenido = document.createDocumentFragment();
-
-								for (const registro of registros) {
-									const fila = document.createElement('tr');
-
-									for (const valor of [
-										registro.tipo,
-										registro.id,
-										registro.nombre
-									]) {
-										const celda = document.createElement('td');
-										celda.textContent = valor;
-										fila.appendChild(celda);
+								<style>
+									:root {
+										--bg: #101923;
+										--panel: #192633;
+										--panel2: #203140;
+										--border: #304453;
+										--text: #edf4f8;
+										--muted: #9aafbd;
+										--green: #27c989;
+										--blue: #399cff;
+										--orange: #f0a34a;
+										--red: #e66c65;
 									}
 
-									const activo = document.createElement('td');
+									* {
+										box-sizing: border-box;
+									}
 
-									activo.textContent = registro.activo
-										? 'Activo'
-										: 'Inactivo / dado de baja';
+									body {
+										margin: 0;
+										padding: 30px 18px;
+										min-height: 100vh;
+										background:
+											radial-gradient(ellipse at top, #20394b 0%, transparent 55%),
+											var(--bg);
+										color: var(--text);
+										font: 15px system-ui, sans-serif;
+									}
 
-									activo.className = registro.activo
-										? 'registro-activo'
-										: 'registro-inactivo';
+									.container {
+										max-width: 950px;
+										margin: auto;
+									}
 
-									fila.appendChild(activo);
-									contenido.appendChild(fila);
+									header {
+										display: flex;
+										align-items: center;
+										gap: 16px;
+										margin-bottom: 30px;
+										padding-bottom: 22px;
+										border-bottom: 1px solid var(--border);
+									}
+
+									.logo {
+										width: 55px;
+										height: 55px;
+										display: grid;
+										place-items: center;
+										border-radius: 16px;
+										background: linear-gradient(135deg, #27c989, #168eaa);
+										font-size: 27px;
+										flex-shrink: 0;
+									}
+
+									h1 {
+										font-size: 27px;
+										margin: 0;
+										letter-spacing: -0.5px;
+									}
+
+									h2 {
+										font-size: 18px;
+										margin: 0;
+									}
+
+									.subtitle {
+										color: var(--muted);
+										margin-top: 4px;
+										font-size: 13px;
+									}
+
+									.status {
+										margin-left: auto;
+										display: flex;
+										align-items: center;
+										gap: 8px;
+										color: var(--green);
+										font-size: 12px;
+										font-weight: 600;
+										white-space: nowrap;
+									}
+
+									.dot {
+										width: 9px;
+										height: 9px;
+										background: var(--green);
+										border-radius: 50%;
+										box-shadow: 0 0 12px var(--green);
+									}
+
+									.card {
+										background: var(--panel);
+										border: 1px solid var(--border);
+										border-radius: 16px;
+										padding: 24px;
+										margin-bottom: 18px;
+										box-shadow: 0 8px 25px #0002;
+									}
+
+									.card-header {
+										display: flex;
+										align-items: center;
+										gap: 12px;
+										margin-bottom: 20px;
+									}
+
+									.icon {
+										width: 43px;
+										height: 43px;
+										display: grid;
+										place-items: center;
+										border-radius: 12px;
+										background: var(--panel2);
+										font-size: 21px;
+										flex-shrink: 0;
+									}
+
+									.description {
+										color: var(--muted);
+										font-size: 12px;
+										margin-top: 4px;
+									}
+
+									label {
+										display: block;
+										color: var(--muted);
+										font-size: 12px;
+										margin: 15px 0 7px;
+									}
+
+									input, select {
+										width: 100%;
+										padding: 12px 14px;
+										border-radius: 9px;
+										border: 1px solid var(--border);
+										background: #101c27;
+										color: var(--text);
+										font: 14px system-ui;
+										outline: none;
+										transition: .2s;
+									}
+
+									input:focus, select:focus {
+										border-color: var(--blue);
+										box-shadow: 0 0 0 3px #399cff20;
+									}
+
+									input::placeholder {
+										color: #627987;
+									}
+
+									select {
+										cursor: pointer;
+									}
+
+									button {
+										padding: 12px 17px;
+										border: 0;
+										border-radius: 9px;
+										color: white;
+										font-weight: 650;
+										font-size: 14px;
+										cursor: pointer;
+										transition: .2s;
+									}
+
+									button:hover:not(:disabled) {
+										filter: brightness(1.12);
+										transform: translateY(-1px);
+									}
+
+									button:active:not(:disabled) {
+										transform: scale(.98);
+									}
+
+									button:disabled {
+										opacity: .55;
+										cursor: wait;
+									}
+
+									.btn-green {
+										background: linear-gradient(135deg, #27c989, #159c70);
+										width: 100%;
+										margin-top: 20px;
+									}
+
+									.btn-blue {
+										background: linear-gradient(135deg, #398fff, #2471d2);
+									}
+
+									.btn-back {
+										display: inline-block;
+										padding: 11px 16px;
+										border: 1px solid var(--border);
+										border-radius: 9px;
+										color: var(--muted);
+										text-decoration: none;
+										font-size: 13px;
+										transition: .2s;
+									}
+
+									.btn-back:hover {
+										background: var(--panel2);
+										color: white;
+									}
+
+									.notice {
+										display: flex;
+										gap: 11px;
+										padding: 13px 15px;
+										border-radius: 10px;
+										background: #203140;
+										border: 1px solid var(--border);
+										color: var(--muted);
+										font-size: 12px;
+										line-height: 1.6;
+										margin-bottom: 18px;
+									}
+
+									.notice-icon {
+										font-size: 18px;
+										flex-shrink: 0;
+									}
+
+									.toolbar {
+										display: flex;
+										align-items: center;
+										justify-content: space-between;
+										gap: 15px;
+										flex-wrap: wrap;
+										margin-bottom: 16px;
+									}
+
+									#estadoRegistros {
+										color: var(--muted);
+										font-size: 12px;
+										margin: 14px 0;
+										min-height: 18px;
+									}
+
+									.tabla-registros {
+										overflow-x: auto;
+										width: 100%;
+										border: 1px solid var(--border);
+										border-radius: 11px;
+										background: #101c27;
+									}
+
+									.tabla-registros table {
+										width: 100%;
+										border-collapse: collapse;
+										min-width: 550px;
+									}
+
+									.tabla-registros th,
+									.tabla-registros td {
+										padding: 14px 15px;
+										border-bottom: 1px solid var(--border);
+										text-align: left;
+										overflow-wrap: anywhere;
+										font-size: 13px;
+									}
+
+									.tabla-registros th {
+										background: #203140;
+										color: #b5c7d2;
+										font-size: 11px;
+										text-transform: uppercase;
+										letter-spacing: .5px;
+									}
+
+									.tabla-registros tbody tr:last-child td {
+										border-bottom: none;
+									}
+
+									.tabla-registros tbody tr:hover {
+										background: #192b39;
+									}
+
+									.registro-activo {
+										color: var(--green);
+										font-weight: 650;
+									}
+
+									.registro-inactivo {
+										color: var(--red);
+										font-weight: 650;
+									}
+
+									.estado-vacio {
+										color: var(--muted);
+										text-align: center !important;
+										padding: 28px !important;
+									}
+
+									#resultado {
+										font-size: 13px;
+										margin: 15px 0;
+									}
+
+									.resultado-ok {
+										color: var(--green);
+									}
+
+									.resultado-error {
+										color: var(--red);
+									}
+
+									footer {
+										text-align: center;
+										color: #657c8b;
+										font-size: 11px;
+										padding: 12px 0 5px;
+									}
+
+									@media (max-width: 650px) {
+										body {
+											padding: 20px 13px;
+										}
+
+										h1 {
+											font-size: 22px;
+										}
+
+										.status {
+											font-size: 10px;
+										}
+
+										.card {
+											padding: 18px;
+										}
+
+										.toolbar {
+											align-items: stretch;
+											flex-direction: column;
+										}
+
+										.toolbar button {
+											width: 100%;
+										}
+									}
+								</style>
+							</head>
+
+							<body>
+
+							<div class="container">
+
+								<header>
+									<div class="logo">⚙️</div>
+
+									<div>
+										<h1>Gestión de registros</h1>
+										<div class="subtitle">
+											Alta y baja de estaciones y operarios
+										</div>
+									</div>
+
+									<div class="status">
+										<span class="dot"></span>
+										CENTRAL
+									</div>
+								</header>
+
+								<!-- FORMULARIO DE ALTAS Y BAJAS -->
+								<section class="card">
+
+									<div class="card-header">
+										<div class="icon">📝</div>
+										<div>
+											<h2>Gestión administrativa</h2>
+											<div class="description">
+												Registrar o deshabilitar estaciones y operarios
+											</div>
+										</div>
+									</div>
+
+									<form method="post" action="/altas">
+
+										<label for="accion">Acción</label>
+
+										<select name="accion" id="accion">
+											<option value="alta">Dar de alta</option>
+											<option value="baja">Dar de baja</option>
+										</select>
+
+										<label for="tipo">Tipo de registro</label>
+
+										<select name="tipo" id="tipo">
+											<option value="station">Estación</option>
+											<option value="operator">Operario</option>
+										</select>
+
+										<label for="id">Identificador (ID)</label>
+
+										<input
+											id="id"
+											name="id"
+											placeholder="Ej. WS-01"
+											required
+											maxlength="64"
+											pattern="[A-Za-z0-9_-]+"
+											autocomplete="off">
+
+										<label for="nombre">Ubicación / nombre</label>
+
+										<input
+											id="nombre"
+											name="nombre"
+											placeholder="Ej. Invernadero norte"
+											maxlength="200">
+
+										<button class="btn-green">
+											✓ Aplicar operación
+										</button>
+
+									</form>
+
+									<p id="resultado" role="status"></p>
+
+								</section>
+
+								<!-- LISTADO DE REGISTROS -->
+								<section class="card">
+
+									<div class="card-header">
+										<div class="icon">📋</div>
+										<div>
+											<h2>Estaciones y operarios registrados</h2>
+											<div class="description">
+												Consulta del estado administrativo en Central
+											</div>
+										</div>
+									</div>
+
+									<div class="notice">
+										<span class="notice-icon">ℹ️</span>
+										<span>
+											<strong>Información:</strong>
+											Activo indica que el ID está habilitado en Central,
+											no que el proceso esté conectado.
+										</span>
+									</div>
+
+									<div class="toolbar">
+
+										<div>
+											<div style="font-weight:600;font-size:14px">
+												Registros de Central
+											</div>
+											<div class="description">
+												Consulta y actualización de datos
+											</div>
+										</div>
+
+										<button
+											type="button"
+											class="btn-blue"
+											id="botonRegistros"
+											onclick="cargarRegistros()">
+											↻ Listar / actualizar registros
+										</button>
+
+									</div>
+
+									<p id="estadoRegistros" role="status" aria-live="polite">
+										Pulsa el botón para consultar los registros.
+									</p>
+
+									<div class="tabla-registros">
+
+										<table>
+											<thead>
+												<tr>
+													<th>Tipo</th>
+													<th>ID</th>
+													<th>Ubicación / nombre</th>
+													<th>Alta administrativa</th>
+												</tr>
+											</thead>
+
+											<tbody id="filasRegistros">
+												<tr>
+													<td colspan="4" class="estado-vacio">
+														📂 Sin consultar.
+													</td>
+												</tr>
+											</tbody>
+										</table>
+
+									</div>
+
+								</section>
+
+								<a href="/" class="btn-back">
+									← Volver al panel de operario
+								</a>
+
+								<footer>
+									GESTIÓN ADMINISTRATIVA · SISTEMA DE CONTROL DE RIEGO
+								</footer>
+
+							</div>
+
+							<script>
+
+								// Mensaje después de una operación completada.
+								if (location.search === '?ok') {
+									const resultado = document.getElementById('resultado');
+
+									resultado.textContent =
+										'✓ Operación completada correctamente.';
+
+									resultado.className = 'resultado-ok';
 								}
 
-								if (registros.length === 0) {
-									const fila = document.createElement('tr');
-									const celda = document.createElement('td');
+								async function cargarRegistros() {
 
-									celda.colSpan = 4;
-									celda.textContent = 'No hay registros.';
+									const boton =
+										document.getElementById('botonRegistros');
 
-									fila.appendChild(celda);
-									contenido.appendChild(fila);
+									const estado =
+										document.getElementById('estadoRegistros');
+
+									const filas =
+										document.getElementById('filasRegistros');
+
+									boton.disabled = true;
+
+									estado.textContent = 'Consultando registros...';
+
+									try {
+
+										const respuesta = await fetch('/api/registros', {
+											cache: 'no-store'
+										});
+
+										if (!respuesta.ok) {
+											throw new Error('HTTP ' + respuesta.status);
+										}
+
+										const registros = await respuesta.json();
+
+										if (!Array.isArray(registros)) {
+											throw new Error('Respuesta no válida');
+										}
+
+										const contenido =
+											document.createDocumentFragment();
+
+										for (const registro of registros) {
+
+											const fila = document.createElement('tr');
+
+											for (const valor of [
+												registro.tipo,
+												registro.id,
+												registro.nombre
+											]) {
+
+												const celda =
+													document.createElement('td');
+
+												celda.textContent = valor ?? '';
+
+												fila.appendChild(celda);
+											}
+
+											const activo =
+												document.createElement('td');
+
+											activo.textContent = registro.activo
+												? '● Activo'
+												: '● Inactivo / dado de baja';
+
+											activo.className = registro.activo
+												? 'registro-activo'
+												: 'registro-inactivo';
+
+											fila.appendChild(activo);
+
+											contenido.appendChild(fila);
+										}
+
+										if (registros.length === 0) {
+
+											const fila = document.createElement('tr');
+
+											const celda = document.createElement('td');
+
+											celda.colSpan = 4;
+											celda.className = 'estado-vacio';
+											celda.textContent = 'No hay registros.';
+
+											fila.appendChild(celda);
+											contenido.appendChild(fila);
+										}
+
+										// Sustituye las filas anteriores; no las duplica.
+										filas.replaceChildren(contenido);
+
+										estado.textContent =
+											'✓ Actualizado: ' +
+											new Date().toLocaleTimeString();
+
+									} catch (error) {
+
+										estado.textContent =
+											'No se pudo actualizar. Los datos mostrados ' +
+											'pueden estar desactualizados.';
+
+										console.warn(
+											'Error consultando registros:', error
+										);
+
+									} finally {
+
+										boton.disabled = false;
+
+									}
 								}
 
-								// Sustituye las filas anteriores; no las duplica.
-								filas.replaceChildren(contenido);
+							</script>
 
-								estado.textContent =
-									'Actualizado: ' + new Date().toLocaleTimeString();
-
-							} catch {
-								estado.textContent =
-									'No se pudo actualizar. Los datos mostrados pueden estar desactualizados.';
-
-							} finally {
-								boton.disabled = false;
-							}
-						}
-					</script>
-					</html>
-                    """;
+							</body>
+							</html>
+							""";
                 } else if ("POST".equals(x.getRequestMethod())) {
                     String origen = x.getRequestHeaders().getFirst("Origin");
                     String host = x.getRequestHeaders().getFirst("Host");

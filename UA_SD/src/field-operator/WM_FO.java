@@ -712,71 +712,507 @@ public class WM_FO {
         System.out.println("Web FO en puerto " + puerto);
     }
 
-    private static String htmlWeb() {
-        return """
-        <!doctype html><html lang="es"><meta charset="utf-8"><title>Operario</title>
-        <style>
-            body{
-                font:16px system-ui;
-                max-width:850px;
-                margin:30px auto;
-                padding:15px
-            }
-            input,button{
-                padding:8px;
-                margin:5px
-            }
-            pre{
-                background:#eee;
-                padding:12px;
-                white-space:pre-wrap;
-                overflow-wrap:anywhere
-            }
-            #eventos {
-                height: 320px;
-                box-sizing: border-box;
-                overflow-y: auto;
-                overflow-x: hidden;
-                white-space: pre-wrap;
-                overflow-wrap: anywhere;
-                background: #10212b;
-                color: #dce9ef;
-                border: 1px solid #294350;
-                border-radius: 10px;
-                padding: 16px;
-                font: 13px/1.6 Consolas, monospace;
-            }
-        </style>
-        <h1>Operario</h1>
-        <form method="post"><button name="accion" value="consultar">Consultar estaciones</button></form>
-        <h2>Solicitar riego</h2><form method="post">
-        <input type="hidden" name="accion" value="regar">
-        <input name="estacion" placeholder="WS-01" required pattern="[A-Za-z0-9_-]+">
-        <input name="duracion" type="number" min="1" step="1" value="20" required>
-        <button>Solicitar</button></form>
-        <h2>Servicios desde fichero</h2><form method="post">
-        <input type="hidden" name="accion" value="fichero">
-        <input name="ruta" placeholder="/servicios/prueba.txt" required><button>Ejecutar</button></form>
-        <h2>Mensajes del operario</h2><pre id="eventos">Conectando...</pre>
+   
+private static String htmlWeb() {
+    return """
+        <!DOCTYPE html>
+        <html lang="es">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <meta name="theme-color" content="#101923">
+            <title>Operario | Panel de control</title>
+
+            <style>
+                :root {
+                    --bg: #101923;
+                    --panel: #192633;
+                    --panel2: #203140;
+                    --border: #304453;
+                    --text: #edf4f8;
+                    --muted: #9aafbd;
+                    --green: #27c989;
+                    --blue: #399cff;
+                    --orange: #f0a34a;
+                }
+
+                * {
+                    box-sizing: border-box;
+                }
+
+                body {
+                    margin: 0;
+                    padding: 30px 18px;
+                    min-height: 100vh;
+                    background:
+                        radial-gradient(ellipse at top, #20394b 0%, transparent 55%),
+                        var(--bg);
+                    color: var(--text);
+                    font: 15px system-ui, sans-serif;
+                }
+
+                .container {
+                    max-width: 950px;
+                    margin: auto;
+                }
+
+                header {
+                    display: flex;
+                    align-items: center;
+                    gap: 16px;
+                    margin-bottom: 30px;
+                    padding-bottom: 22px;
+                    border-bottom: 1px solid var(--border);
+                }
+
+                .logo {
+                    width: 55px;
+                    height: 55px;
+                    display: grid;
+                    place-items: center;
+                    border-radius: 16px;
+                    background: linear-gradient(135deg, #27c989, #168eaa);
+                    font-size: 27px;
+                    flex-shrink: 0;
+                }
+
+                h1 {
+                    font-size: 27px;
+                    margin: 0;
+                    letter-spacing: -0.5px;
+                }
+
+                .subtitle {
+                    color: var(--muted);
+                    margin-top: 4px;
+                    font-size: 13px;
+                }
+
+                .status {
+                    margin-left: auto;
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    color: var(--green);
+                    font-size: 12px;
+                    font-weight: 600;
+                    white-space: nowrap;
+                }
+
+                .dot {
+                    width: 9px;
+                    height: 9px;
+                    background: var(--green);
+                    border-radius: 50%;
+                    box-shadow: 0 0 12px var(--green);
+                }
+
+                .grid {
+                    display: grid;
+                    grid-template-columns: repeat(2, 1fr);
+                    gap: 18px;
+                }
+
+                .card {
+                    background: var(--panel);
+                    border: 1px solid var(--border);
+                    border-radius: 16px;
+                    padding: 23px;
+                    box-shadow: 0 8px 25px #0002;
+                }
+
+                .card.full {
+                    grid-column: 1 / -1;
+                }
+
+                .card-header {
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                    margin-bottom: 20px;
+                }
+
+                .icon {
+                    width: 42px;
+                    height: 42px;
+                    display: grid;
+                    place-items: center;
+                    border-radius: 12px;
+                    background: var(--panel2);
+                    font-size: 21px;
+                    flex-shrink: 0;
+                }
+
+                h2 {
+                    margin: 0;
+                    font-size: 17px;
+                }
+
+                .description {
+                    color: var(--muted);
+                    font-size: 12px;
+                    margin-top: 4px;
+                }
+
+                label {
+                    display: block;
+                    color: var(--muted);
+                    font-size: 12px;
+                    margin: 14px 0 7px;
+                }
+
+                input {
+                    width: 100%;
+                    padding: 12px 14px;
+                    border-radius: 9px;
+                    border: 1px solid var(--border);
+                    background: #101c27;
+                    color: var(--text);
+                    font-size: 14px;
+                    outline: none;
+                    transition: .2s;
+                }
+
+                input:focus {
+                    border-color: var(--blue);
+                    box-shadow: 0 0 0 3px #399cff20;
+                }
+
+                input::placeholder {
+                    color: #627987;
+                }
+
+                button {
+                    width: 100%;
+                    margin-top: 17px;
+                    padding: 12px 16px;
+                    border: 0;
+                    border-radius: 9px;
+                    color: white;
+                    font-weight: 650;
+                    font-size: 14px;
+                    cursor: pointer;
+                    transition: .2s;
+                }
+
+                button:hover {
+                    filter: brightness(1.12);
+                    transform: translateY(-1px);
+                }
+
+                button:active {
+                    transform: scale(.98);
+                }
+
+                .btn-blue {
+                    background: linear-gradient(135deg, #398fff, #2471d2);
+                }
+
+                .btn-green {
+                    background: linear-gradient(135deg, #27c989, #159c70);
+                }
+
+                .btn-orange {
+                    background: linear-gradient(135deg, #f0a34a, #d67b27);
+                }
+
+                .terminal-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    margin-bottom: 14px;
+                    gap: 10px;
+                }
+
+                .terminal-label {
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                }
+
+                .terminal-dots {
+                    display: flex;
+                    gap: 5px;
+                    margin-bottom: 10px;
+                }
+
+                .terminal-dots span {
+                    width: 9px;
+                    height: 9px;
+                    border-radius: 50%;
+                    background: #526574;
+                }
+
+                .terminal-dots span:first-child {
+                    background: #ff6262;
+                }
+
+                .terminal-dots span:nth-child(2) {
+                    background: #f4b74f;
+                }
+
+                .terminal-dots span:last-child {
+                    background: #37ce8a;
+                }
+
+                .live {
+                    color: var(--green);
+                    font-size: 11px;
+                    font-weight: 700;
+                    white-space: nowrap;
+                }
+
+                #eventos {
+                    height: 320px;
+                    overflow-y: auto;
+                    overflow-x: hidden;
+                    white-space: pre-wrap;
+                    overflow-wrap: anywhere;
+                    background: #0b141c;
+                    color: #a9d9c3;
+                    border: 1px solid #294350;
+                    border-radius: 11px;
+                    padding: 17px;
+                    font: 13px/1.7 Consolas, monospace;
+                    scrollbar-width: thin;
+                    scrollbar-color: #456174 #0b141c;
+                }
+
+                footer {
+                    text-align: center;
+                    color: #657c8b;
+                    font-size: 11px;
+                    padding: 25px 0 5px;
+                }
+
+                @media (max-width: 650px) {
+                    body {
+                        padding: 20px 13px;
+                    }
+
+                    .grid {
+                        grid-template-columns: 1fr;
+                    }
+
+                    .card.full {
+                        grid-column: auto;
+                    }
+
+                    h1 {
+                        font-size: 22px;
+                    }
+
+                    .status {
+                        font-size: 10px;
+                    }
+
+                    .card {
+                        padding: 18px;
+                    }
+                }
+            </style>
+        </head>
+
+        <body>
+
+        <div class="container">
+
+            <header>
+                <div class="logo">⚙️</div>
+
+                <div>
+                    <h1>Panel de Operario</h1>
+                    <div class="subtitle">
+                        Sistema de gestión y control de riego
+                    </div>
+                </div>
+
+                <div class="status">
+                    <span class="dot"></span>
+                    SISTEMA ACTIVO
+                </div>
+            </header>
+
+            <div class="grid">
+
+                <!-- CONSULTAR ESTACIONES -->
+                <section class="card">
+
+                    <div class="card-header">
+                        <div class="icon">📡</div>
+                        <div>
+                            <h2>Estaciones</h2>
+                            <div class="description">
+                                Consultar estaciones disponibles
+                            </div>
+                        </div>
+                    </div>
+
+                    <form method="post">
+                        <button
+                            class="btn-blue"
+                            name="accion"
+                            value="consultar">
+                            ↻ Consultar estaciones
+                        </button>
+                    </form>
+
+                </section>
+
+                <!-- SOLICITAR RIEGO -->
+                <section class="card">
+
+                    <div class="card-header">
+                        <div class="icon">💧</div>
+                        <div>
+                            <h2>Solicitar riego</h2>
+                            <div class="description">
+                                Enviar una orden de riego
+                            </div>
+                        </div>
+                    </div>
+
+                    <form method="post">
+
+                        <input type="hidden"
+                            name="accion"
+                            value="regar">
+
+                        <label for="estacion">
+                            Identificador de estación
+                        </label>
+
+                        <input
+                            id="estacion"
+                            name="estacion"
+                            placeholder="Ej. WS-01"
+                            required
+                            pattern="[A-Za-z0-9_-]+">
+
+                        <label for="duracion">
+                            Duración del riego (segundos)
+                        </label>
+
+                        <input
+                            id="duracion"
+                            name="duracion"
+                            type="number"
+                            min="1"
+                            step="1"
+                            value="20"
+                            required>
+
+                        <button class="btn-green">
+                            💧 Solicitar riego
+                        </button>
+
+                    </form>
+
+                </section>
+
+                <!-- SERVICIOS DESDE FICHERO -->
+                <section class="card full">
+
+                    <div class="card-header">
+                        <div class="icon">📂</div>
+                        <div>
+                            <h2>Servicios desde fichero</h2>
+                            <div class="description">
+                                Ejecutar operaciones definidas en un fichero
+                            </div>
+                        </div>
+                    </div>
+
+                    <form method="post">
+
+                        <input type="hidden"
+                            name="accion"
+                            value="fichero">
+
+                        <label for="ruta">
+                            Ruta del fichero
+                        </label>
+
+                        <input
+                            id="ruta"
+                            name="ruta"
+                            placeholder="/servicios/prueba.txt"
+                            required>
+
+                        <button class="btn-orange">
+                            ▶ Ejecutar servicio
+                        </button>
+
+                    </form>
+
+                </section>
+
+                <!-- REGISTRO DE EVENTOS -->
+                <section class="card full">
+
+                    <div class="terminal-header">
+
+                        <div class="terminal-label">
+                            <div class="icon">📋</div>
+                            <div>
+                                <h2>Mensajes del operario</h2>
+                                <div class="description">
+                                    Registro de actividad en tiempo real
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="live">● EN DIRECTO</div>
+
+                    </div>
+
+                    <div class="terminal-dots">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                    </div>
+
+                    <pre id="eventos">Conectando con el sistema...</pre>
+
+                </section>
+
+            </div>
+
+            <footer>
+                PANEL DE OPERARIO · Sistema de control de riego
+            </footer>
+
+        </div>
+
         <script>
             async function actualizar() {
+
                 const ventana = document.getElementById('eventos');
 
-                //Si estaba cerca del final, siguen los mensajes nuevos.
-                const seguir = ventana.scrollHeight - ventana.scrollTop - ventana.clientHeight < 40;
+                // Si estaba cerca del final, seguimos los mensajes nuevos.
+                const seguir =
+                    ventana.scrollHeight -
+                    ventana.scrollTop -
+                    ventana.clientHeight < 40;
 
                 const posicion = ventana.scrollTop;
 
                 try {
-                    const respuesta = await fetch('/eventos', {cache: 'no-store'});
+
+                    const respuesta = await fetch('/eventos', {
+                        cache: 'no-store'
+                    });
 
                     if (!respuesta.ok) {
-                        throw new Error('No se pudieron consultar los mensajes');
+                        throw new Error(
+                            'No se pudieron consultar los mensajes'
+                        );
                     }
 
                     const texto = await respuesta.text();
 
                     if (ventana.textContent !== texto) {
+
                         ventana.textContent = texto;
 
                         ventana.scrollTop = seguir
@@ -785,14 +1221,22 @@ public class WM_FO {
                     }
 
                 } catch {
+
                     // Conservamos los mensajes anteriores si falla una consulta.
-                    console.warn('No se pudo actualizar el registro del operario');
+                    console.warn(
+                        'No se pudo actualizar el registro del operario'
+                    );
+
                 }
 
                 setTimeout(actualizar, 1500);
             }
+
             actualizar();
-        </script></html>
+        </script>
+
+        </body>
+        </html>
         """;
     }
 }
