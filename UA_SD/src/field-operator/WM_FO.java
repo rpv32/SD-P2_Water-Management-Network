@@ -137,7 +137,7 @@ public class WM_FO {
 
         productor.send(new ProducerRecord<>("wm.fo.queries",operatorId,json.writeValueAsString(consulta))).get();
 
-        System.out.println("Consulta enviada. Esperando estaciones disponibles...");
+        registrarMensaje("Consulta enviada. Esperando estaciones disponibles...");
     }
 
     /*
@@ -406,11 +406,9 @@ public class WM_FO {
                     CARPETA_ARCHIVOS.resolve(requestId + ".json"),
                     contenido);
 
-            System.out.println("Solicitud archivada por falta de respuesta: "
-                    + requestId);
+            registrarMensaje("Solicitud archivada por falta de respuesta: " + requestId);
         } catch (Exception e) {
-            System.err.println("No se pudo archivar la solicitud: "
-                    + e.getMessage());
+            registrarMensaje("No se pudo archivar la solicitud: " + requestId + ": " + e.getMessage());
         }
     }
 
@@ -495,7 +493,7 @@ public class WM_FO {
                     try {
                         String resultado = fin.get(1, java.util.concurrent.TimeUnit.SECONDS);
 
-                        System.out.println("Servicio del fichero terminado: " + resultado);
+                        registrarMensaje("Servicio del fichero terminado: " + resultado);
 
                         terminado = true;
 
@@ -512,13 +510,13 @@ public class WM_FO {
             }
 
             if (i + 1 < estaciones.size() && ejecutando) {
-                System.out.println("Esperando 4 segundos para el siguiente servicio...");
+                registrarMensaje("Esperando 4 segundos para el siguiente servicio...");
 
                 Thread.sleep(4000);
             }
         }
 
-        System.out.println("Ejecucion del fichero terminada.");
+        registrarMensaje("Ejecucion del fichero terminada.");
     }
 
     private void publicarSolicitud(String requestId,String stationId,int duracion) throws Exception {
@@ -543,11 +541,11 @@ public class WM_FO {
         solicitudesPendientes.put(requestId, contenido);
         tiemposPendientes.put(requestId, Instant.now());
 
-        System.out.println("requestId: " + requestId);
+        registrarMensaje("Enviando solicitud " + requestId + " a " + stationId + " durante " + duracion + " segundos.");
 
         productor.send(new ProducerRecord<>(TOPIC_SOLICITUDES,stationId,contenido)).get();
 
-        System.out.println("Solicitud publicada. Pendiente de respuesta de Central.");
+        registrarMensaje("Solicitud " + requestId + " publicada en Kafka. Pendiente de respuesta de Central.");
     }
 
     private static void asegurarTopicOperario(String bootstrapServers,String operatorId) {
@@ -672,6 +670,7 @@ public class WM_FO {
                                     mensajeWeb = "Fichero terminado";
                                 } catch (Exception e) {
                                     mensajeWeb = "Fichero detenido: " + e.getMessage();
+                                    registrarMensaje(mensajeWeb);
                                 } finally { ficheroEnCurso.set(false); }
                             }, "fo-fichero").start();
                         }
@@ -682,7 +681,7 @@ public class WM_FO {
                     mensajeWeb = "Datos no validos: " + e.getMessage();
                 } catch (Exception e) {
                     mensajeWeb = "No se pudo confirmar la accion. Revisa los eventos antes de repetir.";
-                    System.err.println("FO WEB: " + e.getMessage());
+                    registrarMensaje(mensajeWeb + " Detalle: " + e.getMessage());
                 }
                 x.getResponseHeaders().set("Location", "/");
                 x.sendResponseHeaders(303, -1); x.close(); return;
@@ -1238,5 +1237,20 @@ private static String htmlWeb() {
         </body>
         </html>
         """;
+    }
+
+    private void registrarMensaje(String mensaje) {
+        String linea = "[" + java.time.LocalTime.now()
+                .withNano(0) + "] " + mensaje;
+
+        System.out.println(linea);
+
+        synchronized (eventosWeb) {
+            if (eventosWeb.size() >= 100) {
+                eventosWeb.removeFirst();
+            }
+
+            eventosWeb.addLast(linea);
+        }
     }
 }
