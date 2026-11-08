@@ -86,38 +86,21 @@ public class WM_FO {
         p.put("bootstrap.servers", bootstrapServers);
         p.put("key.serializer", StringSerializer.class.getName());
         p.put("value.serializer", StringSerializer.class.getName());
-
-        // Esperamos confirmacion de las replicas que participan en el envio.
         p.put("acks", "all");
-
-        // Evita duplicados provocados por reintentos internos del productor.
-        // No sustituye el control de requestId que debe realizar Central.
         p.put("enable.idempotence", "true");
-
-        // Limites de espera para las operaciones de publicacion.
         p.put("max.block.ms", "10000");
         p.put("delivery.timeout.ms", "15000");
         p.put("request.timeout.ms", "10000");
 
         productor = new KafkaProducer<>(p);
 
-        // Configuracion del consumidor: recibe claves y valores como String.
         Properties c = new Properties();
         c.put("bootstrap.servers", bootstrapServers);
         c.put("group.id", "wm-fo-" + operatorId);
         c.put("key.deserializer", StringDeserializer.class.getName());
         c.put("value.deserializer", StringDeserializer.class.getName());
-
-        // Confirmamos los mensajes despues de procesarlos, no automaticamente.
         c.put("enable.auto.commit", "false");
-
-        /*
-         * Si el grupo no tiene una posicion guardada valida, empieza desde
-         * los mensajes mas antiguos que Kafka conserve en el topic.
-         */
         c.put("auto.offset.reset", "earliest");
-
-        // El topic del operario debe estar creado previamente.
         c.put("allow.auto.create.topics", "false");
 
         consumidor = new KafkaConsumer<>(c);

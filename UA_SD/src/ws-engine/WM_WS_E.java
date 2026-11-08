@@ -22,7 +22,7 @@ import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
 import java.util.Map;
 
-public class WM_WS_Engine{
+public class WM_WS_E{
 
     private String StationId;
     private boolean ValvulaAbierta;
@@ -50,7 +50,7 @@ public class WM_WS_Engine{
     private final java.util.Set<String> sesionesEjecutadas = new java.util.HashSet<>();
 
 
-    public WM_WS_Engine(){
+    public WM_WS_E(){
         ValvulaAbierta = false;
         Regando = false;
         running = true;
@@ -879,7 +879,7 @@ public class WM_WS_Engine{
         }
         
 
-        WM_WS_Engine Engine = new WM_WS_Engine();
+        WM_WS_E Engine = new WM_WS_E();
 
         try{ 
             int PuertoMonitor = Integer.parseInt(args[1]);
