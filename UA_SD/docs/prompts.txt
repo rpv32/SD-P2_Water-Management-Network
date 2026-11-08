@@ -1,0 +1,85 @@
+Prompt 1
+Te paso nuestro schema.sql y el enunciado. Revisa si el esquema permite guardar estaciones y operarios acorde a lo que te hemos pasado respecto a los requisitos planteados en el 
+enunciado, controlar que una estacion no tenga dos riegos incompatibles y conservar duracion y volumen al finalizar. Distingue entre lo que garantiza el esquema y lo que 
+tenemos que comprobar desde Java. Indica tambien si hay tablas definidas que nuestro codigo todavia no utiliza.
+
+Prompt 2
+Queremos dar de baja una estación o un operario sin borrar sus riegos anteriores y poder reactivarlo despues. Explícanos como usar un campo active en SQLite, como 
+conservar las claves foráneas y que comprobaciones deberíamos hacer si hay un servicio pendiente o en curso. Propón cambios pequenos sobre nuestro esquema y nuestros 
+métodos de alta.
+
+Prompt 3
+Te paso DataBaseManager.java y schema.sql. Queremos que todo el SQL quede en esta clase y que los otros módulos solo llamen a sus métodos. Revisa su organización y 
+explícanos el constructor, los métodos de consulta y los de actualización. Propón los cambios mínimos necesarios y explica cada cambio para que podamos entender lo que has hecho.
+
+Prompt 4
+Necesitamos reservar una estación y crear su solicitud y sesión sin dejar la base de datos a medias. Explícanos donde empezar, confirmar y deshacer una transaccion con 
+JDBC. Usa nuestros métodos reales para mostrar que pasa si falla una sentencia y como evitar que un error de base de datos se interprete como que el ID no existe.
+
+Prompt 5
+Revisa nuestro control de duplicados. Usamos requestId para las solicitudes, sessionId para los riegos y eventId para la telemetria. Explica como evitar una segunda 
+sesión o un segundo resultado cuando Kafka vuelve a entregar un mensaje. Distingue entre guardar una operacion una vez y reenviar su respuesta.
+
+Prompt 6
+Explícanos como se comunican WM_WS_M, WM_WS_E y WM_Central en nuestro código. Indica quien abre cada ServerSocket, quien inicia la conexión y para que usamos cada socket. 
+Aclara que las ordenes de riego van por Kafka y que los sockets se usan para registro y supervisión. Basa la explicación en los archivos que adjuntamos.
+
+Prompt 7
+Usamos DataOutputStream.writeUTF y DataInputStream.readUTF para enviar tramas con campos separados por #. Explícanos como se envia y recibe una trama, por que usamos 
+split("#", -1), cómo relacionamos una respuesta con su messageId y qué validaciones debe hacer el receptor. Revisa estos ejemplos REGISTER, ENGINE_HELLO, HEALTH_CHECK 
+y HEALTH_RESULT sin cambiar el protocolo que ya tenemos acordado.
+
+Prompt 8
+Queremos entender los heartbeats y los timeouts. Explica la diferencia entre que Engine responda KO, que no responda y que se cierre la conexión del Monitor con Central. 
+Revisa como se traducen esas situaciones a LEAK y DISCONNECTED. Explica también como reconectar sin reiniciar los otros módulos y señala los casos que el código no cubra 
+todavía.
+
+Prompt 9
+Queremos ejecutar la práctica en dos PCs: en uno los operarios y en otro las estaciones con Monitor y Engine. Central, SQLite y Kafka ya estan en Railway. Explica paso a paso 
+como preparar la imagen Docker, copiarla al segundo PC y arrancar las instancias con nuestro instancias.ps1. Usa los nombres y rutas reales del proyecto y separa la construcción 
+previa de la ejecución durante la corrección.
+
+Prompt 10
+Te paso Dockerfile, pom.xml, compose.instancias.yml e instancias.ps1. Comprueba si otra persona puede ejecutar el proyecto desde una copia limpia sin tener Java ni Maven 
+instalados localmente. Indica que archivos necesita, que se descarga durante la construcción y que comprobaciones debemos hacer. No supongas que cualquier ordenador tiene 
+Docker o una arquitectura compatible.
+
+Prompt 11
+Te paso nuestro compose.yml. Explícalo servicio por servicio: broker, central, monitor, engine, fo1 y fo2. Queremos entenderlo, usa ejemplos del propio archivo y 
+explica que cosas depends_on no garantiza sobre la disponibilidad de Kafka o Central.
+
+Prompt 12
+Queremos conservar los datos al parar o recrear contenedores, explica como podemos hacerlo en nuestro Compose.
+
+Prompt 13
+Ayudanos a desplegar WM_Central y Kafka en Railway siguiendo el tutorial de clase que adjuntamos. Central usa SQLite en /data/wm.db y nuestro Dockerfile esta en 
+docker/dockerfile. Explica como configurar el repositorio, la construccion, las variables, el volumen persistente y las conexiones publicas. No inventes opciones del panel y 
+diferencia las instrucciones verificadas de lo que tengamos que comprobar en nuestra cuenta.
+
+Prompt 14
+Queremos una web sencilla de Central integrada en WM_Central.java. Ayudanos a mostrar las estaciones y sus estados, caudal, volumen y operario. Usa los colores del enunciado, 
+evita interpretar los datos recibidos como HTML.
+
+Prompt 15
+Queremos una pagina /altas dentro de la web de Central para dar de alta, dar de baja y reactivar estaciones y operarios. Tambien queremos un botón que liste los registros 
+y actualice la tabla cada vez que se pulse.
+
+Prompt 16
+Necesitamos una web de operario sencilla y toda dentro de WM_FO.java. Queremos consultar estaciones, solicitar un riego, ejecutar un fichero y mostrar los mensajes 
+de ese operario.
+
+Prompt 17
+La ventana de logs del FO crece demasiado. Ayudanos a darle altura fija y scroll. Explica el CSS y el JavaScript y aplica lo mismo a una ventana de actividad integrada en 
+el panel de Central.
+
+Prompt 18
+Te paso el enunciado, la rubrica, arquitectura.md, protocolo.md, estados-ws.md y los fuentes actuales. Haznos una batería de pruebas finales para comprobar que funciona 
+todo acorde a lo que dice el enunciado/rúbrica.
+
+En la práctica, si realizamos más prompts de los aquí presentados, pero en su gran mayoría servían para la resolución de errores, explicación de conceptos/ideas, o implementacion 
+de codigo de los cuales desconocemos en gran medida como implementarlos nosotros (como podría ser la implementación de las paginas web mediante java, ciertos atributos o métodos 
+de Kafka), ponerlos todos aqui solo serviria para confundir pues muchos eran prompts de seguimiento, otros eran en chats separados, por eso hemos decidido poner los principales 
+que usamos para guiar de forma general como íbamos realizando la práctica. En cualquier caso, si pediamos algo a la ia que nosotros no supiéramos implementar, le pediamos a su 
+vez que nos explicara el por que de lo que había implementado, que solucionaba, o como funcionaba, de esa manera, intentábamos comprender lo que nos había propuesto, ya sea para 
+detectar inconsistencias o problemas, o proponer nuestras propias soluciones para que fueran valoradas. Lamentamos no poder ponerlos pero lo consideramos más eficiente asi.
+
